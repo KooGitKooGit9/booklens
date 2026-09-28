@@ -51,6 +51,29 @@ public enum WordLocator {
         var surface = token?.text ?? word.text
         while let last = surface.last, Tokenizer.isHyphen(last) { surface.removeLast() }
         surface = Tokenizer.normalize(surface)
+        var wordRect = word.rect
+        // OCR often reads an em dash as a hyphen ("hopes—however" → "hopes-however"), so for
+        // hyphen-joined words on one line pick the part under the cursor. The model still sees
+        // the full sentence and can report a real compound ("well-known") as the expression.
+        var lineWord = Tokenizer.normalize(word.text)
+        while let last = lineWord.last, Tokenizer.isHyphen(last) { lineWord.removeLast() }
+        if surface.contains("-"), lineWord == surface, wordRect.width > 0 {
+            let parts = surface.split(separator: "-", omittingEmptySubsequences: false).map(String.init)
+            let fraction = min(max((point.x - wordRect.minX) / wordRect.width, 0), 0.999)
+            let index = fraction * CGFloat(surface.count)
+            var offset = 0
+            for part in parts {
+                let end = offset + part.count
+                if index < CGFloat(end) + 0.5 || part == parts.last {
+                    let unit = wordRect.width / CGFloat(surface.count)
+                    wordRect = CGRect(x: wordRect.minX + CGFloat(offset) * unit, y: wordRect.minY,
+                                      width: CGFloat(part.count) * unit, height: wordRect.height)
+                    surface = part
+                    break
+                }
+                offset = end + 1
+            }
+        }
         guard Tokenizer.isLookupCandidate(surface) else { return nil }
 
         let wordStart = token.map { joinedString.distance(from: joinedString.startIndex, to: $0.range.lowerBound) } ?? targetOffset
@@ -61,7 +84,7 @@ public enum WordLocator {
         let cEnd = expandToWordBoundary(joined, min(joined.count, sEnd + options.contextRadius), backward: false)
         let context = clean(String(joined[cStart..<cEnd]))
 
-        return WordHit(word: surface, rect: word.rect, sentence: sentence, context: context)
+        return WordHit(word: surface, rect: wordRect, sentence: sentence, context: context)
     }
 
     // MARK: - Hit testing

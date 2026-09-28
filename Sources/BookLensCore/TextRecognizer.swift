@@ -50,16 +50,21 @@ public final class TextRecognizer: @unchecked Sendable {
             let text = candidate.string
             let lineRect = toPixels(observation.boundingBox)
             let tokens = Tokenizer.words(in: text)
+            let chunks = Self.whitespaceChunks(in: text)
+            var chunkBoxes: [Range<String.Index>: CGRect] = [:]
+            for chunk in chunks {
+                // Whitespace-delimited chunks get reliable boxes from Vision; sub-word ranges often do not.
+                if let box = try? candidate.boundingBox(for: chunk) {
+                    let r = toPixels(box.boundingBox)
+                    let wholeLine = chunks.count > 1 && r.width > lineRect.width * 0.9
+                    if !wholeLine, r.width > 0, r.height > 0 { chunkBoxes[chunk] = r }
+                }
+            }
             var words: [RecognizedWord] = []
             for token in tokens {
                 var rect: CGRect?
-                if let box = try? candidate.boundingBox(for: token.range) {
-                    let r = toPixels(box.boundingBox)
-                    // Vision occasionally returns the whole line box for a sub-range; reject that.
-                    let wholeLine = tokens.count > 1 && r.width > lineRect.width * 0.9
-                    if !wholeLine, r.width > 0, r.height > 0 {
-                        rect = r
-                    }
+                if let chunk = chunks.first(where: { $0.contains(token.range.lowerBound) }), let chunkRect = chunkBoxes[chunk] {
+                    rect = Self.proportionalRect(for: token.range, in: String(text[chunk]), offsetIn: text, chunk: chunk, chunkRect: chunkRect)
                 }
                 words.append(RecognizedWord(
                     text: token.text,
@@ -69,6 +74,33 @@ public final class TextRecognizer: @unchecked Sendable {
             lines.append(RecognizedLine(text: text, rect: lineRect, words: words, confidence: candidate.confidence))
         }
         return lines
+    }
+
+    static func whitespaceChunks(in text: String) -> [Range<String.Index>] {
+        var chunks: [Range<String.Index>] = []
+        var start: String.Index?
+        var i = text.startIndex
+        while i < text.endIndex {
+            if text[i].isWhitespace {
+                if let s = start { chunks.append(s..<i); start = nil }
+            } else if start == nil {
+                start = i
+            }
+            i = text.index(after: i)
+        }
+        if let s = start { chunks.append(s..<text.endIndex) }
+        return chunks
+    }
+
+    /// Box of a token inside a chunk ("—however," within "hopes—however,"), by character share of the chunk box.
+    static func proportionalRect(for range: Range<String.Index>, in chunkText: String, offsetIn text: String,
+                                 chunk: Range<String.Index>, chunkRect: CGRect) -> CGRect {
+        let total = max(text.distance(from: chunk.lowerBound, to: chunk.upperBound), 1)
+        let start = text.distance(from: chunk.lowerBound, to: range.lowerBound)
+        let length = text.distance(from: range.lowerBound, to: range.upperBound)
+        if start == 0, length == total { return chunkRect }
+        let unit = chunkRect.width / CGFloat(total)
+        return CGRect(x: chunkRect.minX + CGFloat(start) * unit, y: chunkRect.minY, width: CGFloat(length) * unit, height: chunkRect.height)
     }
 
     /// Estimates a word's box by its character offset within the line. Used when Vision

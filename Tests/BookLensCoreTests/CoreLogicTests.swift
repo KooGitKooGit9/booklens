@@ -85,6 +85,17 @@ final class WordLocatorTests: XCTestCase {
         XCTAssertFalse(hit.context.contains("apples"))
     }
 
+    func testDashReadAsHyphenPicksPartUnderCursor() throws {
+        let lines = [makeLine("She kept her hopes-however slim.", y: 0)]
+        let word = lines[0].words.first { $0.text == "hopes-however" }!.rect
+        let left = try XCTUnwrap(WordLocator.locate(point: CGPoint(x: word.minX + 10, y: word.midY), in: lines))
+        XCTAssertEqual(left.word, "hopes")
+        XCTAssertLessThan(left.rect.width, word.width)
+        let right = try XCTUnwrap(WordLocator.locate(point: CGPoint(x: word.maxX - 10, y: word.midY), in: lines))
+        XCTAssertEqual(right.word, "however")
+        XCTAssertEqual(right.sentence, "She kept her hopes-however slim.")
+    }
+
     func testIgnoresNumbers() {
         let lines = [makeLine("Chapter 12", y: 0)]
         XCTAssertNil(WordLocator.locate(point: center(of: "12", in: lines[0]), in: lines))
