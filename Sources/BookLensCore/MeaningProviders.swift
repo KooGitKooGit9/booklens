@@ -38,7 +38,7 @@ public struct OllamaMeaningProvider: MeaningProvider {
                             continuation.yield(.partial(def))
                         }
                     }
-                    var final = WordDefinition.fromModelJSON(buffer, source: source)
+                    var final = WordDefinition.fromModelJSON(buffer, source: source).cleaned()
                     if final.lemma.isEmpty { final.lemma = request.word.lowercased() }
                     if final.expression.isEmpty { final.expression = final.lemma }
                     continuation.yield(.complete(final))
@@ -49,6 +49,28 @@ public struct OllamaMeaningProvider: MeaningProvider {
             }
             continuation.onTermination = { _ in task.cancel() }
         }
+    }
+}
+
+extension WordDefinition {
+    /// Removes duplicate or redundant "other meanings" that small models tend to produce.
+    public func cleaned() -> WordDefinition {
+        var copy = self
+        func key(_ s: String) -> String {
+            // Ignore parenthetical qualifiers: "(사실을) 인정받다" duplicates "인정받다".
+            s.replacingOccurrences(of: #"\([^)]*\)"#, with: "", options: .regularExpression)
+                .lowercased().filter { !$0.isWhitespace && !$0.isPunctuation && $0 != "·" }
+        }
+        let meaningKeys = Set(meaning.split(separator: ",").map { key(String($0)) })
+        var seen = Set<String>()
+        copy.otherMeanings = otherMeanings.compactMap { item -> String? in
+            let k = key(item)
+            guard !k.isEmpty, !meaningKeys.contains(k), k != key(meaning), seen.insert(k).inserted else { return nil }
+            return item
+        }
+        copy.otherMeanings = Array(copy.otherMeanings.prefix(3))
+        if copy.explanation == copy.meaning { copy.explanation = "" }
+        return copy
     }
 }
 

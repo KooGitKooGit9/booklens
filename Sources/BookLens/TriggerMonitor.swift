@@ -41,8 +41,19 @@ final class TriggerMonitor {
         firedAt = nil
     }
 
+    /// Current modifier keys. CGEventSource state is readable without Accessibility/Input Monitoring permission.
+    static var currentFlags: NSEvent.ModifierFlags {
+        let cg = CGEventSource.flagsState(.combinedSessionState)
+        var flags: NSEvent.ModifierFlags = []
+        if cg.contains(.maskAlternate) { flags.insert(.option) }
+        if cg.contains(.maskControl) { flags.insert(.control) }
+        if cg.contains(.maskCommand) { flags.insert(.command) }
+        if cg.contains(.maskShift) { flags.insert(.shift) }
+        return flags
+    }
+
     var isModifierHeld: Bool {
-        Self.isHeld(settings.triggerMode, flags: NSEvent.modifierFlags)
+        Self.isHeld(settings.triggerMode, flags: Self.currentFlags)
     }
 
     static func isHeld(_ mode: TriggerMode, flags: NSEvent.ModifierFlags) -> Bool {
@@ -76,7 +87,7 @@ final class TriggerMonitor {
         case .dwell:
             // Do not fire while any modifier or mouse button is down (dragging, shortcuts).
             guard NSEvent.pressedMouseButtons == 0,
-                  NSEvent.modifierFlags.intersection([.option, .control, .command, .shift]).isEmpty else { return }
+                  Self.currentFlags.isEmpty else { return }
             delay = settings.dwellDelay
         }
         guard now.timeIntervalSince(stillSince) >= delay else { return }

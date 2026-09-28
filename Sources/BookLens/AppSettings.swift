@@ -34,12 +34,13 @@ struct RecommendedModel: Identifiable, Hashable {
 }
 
 let recommendedModels: [RecommendedModel] = [
-    RecommendedModel(name: "qwen2.5:7b-instruct", title: "Qwen 2.5 7B (추천)", detail: "빠르고 정확함 · Apache 2.0 (상업적 이용 가능)", sizeGB: 4.7),
-    RecommendedModel(name: "gemma3:4b", title: "Gemma 3 4B", detail: "가벼움 · 메모리가 적을 때", sizeGB: 3.3),
-    RecommendedModel(name: "exaone3.5:7.8b", title: "EXAONE 3.5 7.8B", detail: "한국어 표현이 가장 자연스러움 · 비상업적 이용만 허용", sizeGB: 4.8),
+    RecommendedModel(name: "qwen3:8b", title: "Qwen 3 8B (추천)", detail: "정확하고 빠름 · Apache 2.0 (상업적 이용 가능)", sizeGB: 5.2),
+    RecommendedModel(name: "gemma3:12b", title: "Gemma 3 12B", detail: "가장 정확하지만 느림 (뜻 표시까지 약 5초)", sizeGB: 8.1),
+    RecommendedModel(name: "gemma3:4b", title: "Gemma 3 4B", detail: "가벼움 · 메모리 8GB Mac용, 정확도 낮음", sizeGB: 3.3),
+    RecommendedModel(name: "exaone3.5:7.8b", title: "EXAONE 3.5 7.8B", detail: "한국어가 자연스러움 · 비상업적 이용만 허용", sizeGB: 4.8),
 ]
 
-let defaultModelName = "qwen2.5:7b-instruct"
+let defaultModelName = "qwen3:8b"
 
 /// User preferences, persisted in UserDefaults.
 final class AppSettings: ObservableObject {

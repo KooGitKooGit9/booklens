@@ -94,6 +94,7 @@ public final class OllamaClient: @unchecked Sendable {
             "messages": messages.map { ["role": $0.role, "content": $0.content] },
             "stream": true,
             "keep_alive": "30m",
+            "think": false,
             "options": options,
         ]
         if let format { body["format"] = format }

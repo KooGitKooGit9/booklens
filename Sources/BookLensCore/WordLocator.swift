@@ -13,14 +13,27 @@ public enum WordLocator {
         public init() {}
     }
 
-    public static func locate(point: CGPoint, in lines: [RecognizedLine], options: Options = Options()) -> WordHit? {
+    /// - Parameter imageSize: size of the captured image. When given, lines cut off by the capture
+    ///   edges end the context there, so partial lines are not stitched into the sentence.
+    public static func locate(point: CGPoint, in lines: [RecognizedLine], imageSize: CGSize? = nil, options: Options = Options()) -> WordHit? {
         guard let lineIndex = lineIndex(at: point, in: lines, options: options) else { return nil }
         let line = lines[lineIndex]
         guard let wordIndex = wordIndex(at: point, in: line, options: options) else { return nil }
         let word = line.words[wordIndex]
 
         // Reconstruct running text for the column the line belongs to.
-        let column = columnLines(for: lineIndex, in: lines)
+        var column = columnLines(for: lineIndex, in: lines)
+        if let size = imageSize, let pos = column.firstIndex(of: lineIndex) {
+            let edge: CGFloat = 2
+            func clipped(_ i: Int) -> Bool {
+                let r = lines[i].rect
+                return r.minX <= edge || r.maxX >= size.width - edge || r.minY <= edge || r.maxY >= size.height - edge
+            }
+            var lo = pos, hi = pos
+            while lo > 0, !clipped(column[lo - 1]) { lo -= 1 }
+            while hi < column.count - 1, !clipped(column[hi + 1]) { hi += 1 }
+            column = Array(column[lo...hi])
+        }
         var joined: [Character] = []
         var targetOffset = 0
         for idx in column {

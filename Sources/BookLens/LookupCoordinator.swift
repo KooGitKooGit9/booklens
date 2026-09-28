@@ -43,7 +43,8 @@ final class LookupCoordinator {
     /// Hides the popup once the mouse has left the word and popup for a moment.
     func mouseMoved(to point: CGPoint, modifierHeld: Bool) {
         guard overlay.isVisible else { awaySince = nil; return }
-        if overlay.isNear(point) {
+        // While the trigger key is held the next lookup replaces the popup, so don't flicker it closed.
+        if modifierHeld || overlay.isNear(point) {
             awaySince = nil
             return
         }
@@ -100,7 +101,7 @@ final class LookupCoordinator {
         }
         if Task.isCancelled { return }
 
-        guard let hit = WordLocator.locate(point: region.imagePoint(for: point), in: lines) else {
+        guard let hit = WordLocator.locate(point: region.imagePoint(for: point), in: lines, imageSize: CGSize(width: image.width, height: image.height)) else {
             log.debug("No word at point (\(lines.count) lines)")
             if overlay.isVisible, !overlay.isNear(point) { dismiss() }
             return

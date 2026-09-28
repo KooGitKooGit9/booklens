@@ -18,7 +18,7 @@ enum DiagnosticTools {
             return 1
         }
         let t1 = Date()
-        guard let hit = WordLocator.locate(point: CGPoint(x: x, y: y), in: lines) else {
+        guard let hit = WordLocator.locate(point: CGPoint(x: x, y: y), in: lines, imageSize: CGSize(width: image.width, height: image.height)) else {
             print("{\"error\":\"no word\",\"lines\":\(lines.count),\"ocr_ms\":\(Int(t1.timeIntervalSince(t0) * 1000))}")
             return 2
         }
@@ -66,7 +66,7 @@ enum DiagnosticTools {
         try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         let full = WordDefinition(expression: "give up", lemma: "give", partOfSpeech: "구동사", meaning: "(시도·희망을) 포기하다, 그만두다",
                                   ipa: "/ɡɪv ʌp/", explanation: "여러 번 실패한 뒤 더 이상 하지 않기로 했다는 뜻이다.",
-                                  otherMeanings: ["주다", "(파티 등을) 열다", "굴복하다"], source: "ollama:qwen2.5:7b-instruct")
+                                  otherMeanings: ["주다", "(파티 등을) 열다", "굴복하다"], source: "ollama:qwen3:8b")
         let cases: [(String, PopupState.Phase, WordDefinition, Bool)] = [
             ("loading", .loading, WordDefinition(), false),
             ("streaming", .streaming, WordDefinition(expression: "give up", lemma: "give", partOfSpeech: "구동사", meaning: "(시도·희망을) 포기하"), false),

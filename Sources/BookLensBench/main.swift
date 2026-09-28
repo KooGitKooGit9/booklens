@@ -14,6 +14,10 @@ let cases: [LookupRequest] = [
     LookupRequest(word: "bore", sentence: "She bore the pain with remarkable patience."),
     LookupRequest(word: "hand", sentence: "On the other hand, the plan could save us a lot of money."),
     LookupRequest(word: "fine", sentence: "He had to pay a fine for parking in the wrong place."),
+    LookupRequest(word: "wound", sentence: "He wound the old clock before going to bed."),
+    LookupRequest(word: "minute", sentence: "The scientist examined the minute differences between the two samples."),
+    LookupRequest(word: "content", sentence: "She seemed content with her quiet life in the village."),
+    LookupRequest(word: "novel", sentence: "The committee welcomed his novel approach to the problem."),
 ]
 
 func runModels(_ models: [String]) async {
@@ -66,6 +70,10 @@ case "web":
     _ = NSApplication.shared
     let ok = await MainActor.run { WebPageBench() }.run(samplesPerPage: 40, dumpDir: dump)
     exit(ok ? 0 : 1)
+case "e2e":
+    _ = NSApplication.shared
+    let model = args.count > 1 ? args[1] : "qwen3:8b"
+    await MainActor.run { WebPageBench() }.runEndToEnd(model: model, targets: ["ephemeral", "obstinate", "acknowledged", "drizzly", "spleen", "bore", "unpredictably", "let", "give"])
 default:
     print("usage: booklens-bench models [model ...] | web [dump-dir]")
 }

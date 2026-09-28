@@ -105,6 +105,41 @@ final class WebPageBench: NSObject, WKNavigationDelegate {
         return (c, CGPoint(x: p.x - r.minX, y: p.y - r.minY))
     }
 
+    /// End-to-end: render → crop like the app → OCR → locate → local model definition.
+    func runEndToEnd(model: String, targets: [String]) async {
+        let recognizer = TextRecognizer()
+        let provider = OllamaMeaningProvider(model: model)
+        for style in [Self.styles[0], Self.styles[1], Self.styles[2]] {
+            for passage in Self.passages {
+                guard let (image, boxes) = await load(style: style, passage: passage) else { continue }
+                for target in targets {
+                    guard let box = boxes.first(where: { $0.text == target }) else { continue }
+                    let center = CGPoint(x: box.rect.midX, y: box.rect.midY)
+                    guard let (crop, local) = Self.crop(image, around: center, halfWidth: CGFloat(image.width), halfHeight: 400) else { continue }
+                    let t0 = Date()
+                    let lines = (try? recognizer.recognize(crop)) ?? []
+                    guard let hit = WordLocator.locate(point: local, in: lines, imageSize: CGSize(width: crop.width, height: crop.height)) else { print("\(style.name) \(target): NO HIT"); continue }
+                    let t1 = Date()
+                    var firstMeaning: Date?
+                    var def = WordDefinition()
+                    do {
+                        for try await e in provider.lookup(LookupRequest(word: hit.word, sentence: hit.sentence, context: hit.context)) {
+                            switch e {
+                            case .partial(let d): if firstMeaning == nil, !d.meaning.isEmpty { firstMeaning = Date() }
+                            case .complete(let d): def = d
+                            }
+                        }
+                    } catch { print("ERR \(error)") }
+                    let t2 = Date()
+                    print(String(format: "[%@] %@ OCR %.0fms, meaning %.2fs, total %.2fs", style.name, hit.word, t1.timeIntervalSince(t0) * 1000,
+                                 (firstMeaning ?? t2).timeIntervalSince(t0), t2.timeIntervalSince(t0)))
+                    print("   sentence: \(hit.sentence)")
+                    print("   → \(def.expression) [\(def.partOfSpeech)] \(def.meaning) | \(def.explanation) | \(def.otherMeanings.joined(separator: ", "))")
+                }
+            }
+        }
+    }
+
     func run(samplesPerPage: Int, dumpDir: URL?) async -> Bool {
         let recognizer = TextRecognizer()
         var totalHits = 0, totalCorrect = 0
@@ -127,12 +162,12 @@ final class WebPageBench: NSObject, WKNavigationDelegate {
                 var misses: [String] = []
                 for (i, box) in candidates.enumerated() where i % stride == 0 {
                     let center = CGPoint(x: box.rect.midX, y: box.rect.midY)
-                    // Same capture window as the app: ±520 × ±200 points at 2x.
-                    guard let (crop, local) = Self.crop(image, around: center, halfWidth: 1040, halfHeight: 400) else { continue }
+                    // Same capture band as the app: full window width × ±200 points at 2x.
+                    guard let (crop, local) = Self.crop(image, around: center, halfWidth: CGFloat(image.width), halfHeight: 400) else { continue }
                     let t0 = Date()
                     let lines = (try? recognizer.recognize(crop)) ?? []
                     ocrTimes.append(Date().timeIntervalSince(t0))
-                    let hit = WordLocator.locate(point: local, in: lines)
+                    let hit = WordLocator.locate(point: local, in: lines, imageSize: CGSize(width: crop.width, height: crop.height))
                     total += 1
                     let expected = Tokenizer.normalize(box.text).lowercased()
                     if let hit, hit.word.lowercased() == expected {

@@ -40,9 +40,10 @@ enum CaptureError: LocalizedError, Equatable {
 
 /// Captures screen regions with ScreenCaptureKit, excluding BookLens's own windows.
 final class ScreenCapturer {
-    /// Half-size of the captured area around the cursor, in points.
-    var halfWidth: CGFloat = 520
+    /// Half-height of the captured band around the cursor, in points.
     var halfHeight: CGFloat = 200
+    /// Widest band captured; wider windows are cropped around the cursor.
+    var maxWidth: CGFloat = 1800
 
     private var cachedContent: SCShareableContent?
     private var cachedAt = Date.distantPast
@@ -70,7 +71,16 @@ final class ScreenCapturer {
             throw CaptureError.noDisplay
         }
         let screenFrame = screen.frame
-        var rect = CGRect(x: point.x - halfWidth, y: point.y - halfHeight, width: halfWidth * 2, height: halfHeight * 2)
+        // Capture a horizontal band spanning the window under the cursor, so text lines are not cut
+        // off at the sides (a cut line would garble the sentence sent to the model).
+        let window = Self.windowFrame(at: point) ?? screenFrame
+        var minX = max(window.minX, screenFrame.minX)
+        var maxX = min(window.maxX, screenFrame.maxX)
+        if maxX - minX > maxWidth {
+            minX = max(minX, min(point.x - maxWidth / 2, maxX - maxWidth))
+            maxX = minX + maxWidth
+        }
+        var rect = CGRect(x: minX, y: point.y - halfHeight, width: maxX - minX, height: halfHeight * 2)
         rect = rect.intersection(screenFrame).integral
         guard !rect.isEmpty else { throw CaptureError.noDisplay }
 
@@ -83,7 +93,9 @@ final class ScreenCapturer {
         let ownApps = content.applications.filter { $0.processID == ownPID }
         let filter = SCContentFilter(display: display, excludingApplications: ownApps, exceptingWindows: [])
 
-        let scale = screen.backingScaleFactor
+        // Capture at least 2 pixels per point: OCR is much more reliable on small text at 2x,
+        // and ScreenCaptureKit upscales non-Retina displays for us.
+        let scale = max(screen.backingScaleFactor, 2)
         let config = SCStreamConfiguration()
         // sourceRect is in display-local points with a top-left origin.
         config.sourceRect = CGRect(x: rect.minX - screenFrame.minX,
@@ -106,27 +118,37 @@ final class ScreenCapturer {
         }
     }
 
-    /// Title of the front-most window under `point` ("App — Window"), for the vocabulary list.
-    static func windowTitle(at point: CGPoint) -> String {
-        guard let primary = NSScreen.screens.first else { return "" }
+    /// Frame (Cocoa global coordinates) of the front-most normal window under `point`, excluding BookLens.
+    static func windowFrame(at point: CGPoint) -> CGRect? {
+        guard let info = windowInfo(at: point), let primary = NSScreen.screens.first,
+              let boundsDict = info[kCGWindowBounds as String] as? NSDictionary,
+              let bounds = CGRect(dictionaryRepresentation: boundsDict) else { return nil }
+        return CGRect(x: bounds.minX, y: primary.frame.maxY - bounds.maxY, width: bounds.width, height: bounds.height)
+    }
+
+    private static func windowInfo(at point: CGPoint) -> [String: Any]? {
+        guard let primary = NSScreen.screens.first else { return nil }
         // CGWindowList uses top-left origin global coordinates.
         let cgPoint = CGPoint(x: point.x, y: primary.frame.maxY - point.y)
         let ownPID = ProcessInfo.processInfo.processIdentifier
         guard let list = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] else {
-            return ""
+            return nil
         }
-        for info in list {
+        return list.first { info in
             guard let pid = info[kCGWindowOwnerPID as String] as? pid_t, pid != ownPID,
                   (info[kCGWindowLayer as String] as? Int) == 0,
                   let boundsDict = info[kCGWindowBounds as String] as? NSDictionary,
-                  let bounds = CGRect(dictionaryRepresentation: boundsDict),
-                  bounds.contains(cgPoint)
-            else { continue }
-            let owner = info[kCGWindowOwnerName as String] as? String ?? ""
-            let name = info[kCGWindowName as String] as? String ?? ""
-            return cleanTitle(owner: owner, name: name)
+                  let bounds = CGRect(dictionaryRepresentation: boundsDict) else { return false }
+            return bounds.contains(cgPoint)
         }
-        return ""
+    }
+
+    /// Title of the front-most window under `point` ("App — Window"), for the vocabulary list.
+    static func windowTitle(at point: CGPoint) -> String {
+        guard let info = windowInfo(at: point) else { return "" }
+        let owner = info[kCGWindowOwnerName as String] as? String ?? ""
+        let name = info[kCGWindowName as String] as? String ?? ""
+        return cleanTitle(owner: owner, name: name)
     }
 
     /// Strips browser noise so the title reads like a book name.

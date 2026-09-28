@@ -143,6 +143,13 @@ final class PartialJSONTests: XCTestCase {
         XCTAssertTrue(d.meaning.hasSuffix("line\nnext"))
     }
 
+    func testCleanedRemovesDuplicateMeanings() {
+        let d = WordDefinition(meaning: "인정하다, 인정받다", explanation: "인정하다, 인정받다",
+                               otherMeanings: ["인정하다", "알리다", "알리다 ", "감사하다", "(사실을) 인정받다", "고백하다"]).cleaned()
+        XCTAssertEqual(d.otherMeanings, ["알리다", "감사하다", "고백하다"])
+        XCTAssertEqual(d.explanation, "")
+    }
+
     func testEmptyAndGarbage() {
         XCTAssertTrue(WordDefinition.fromModelJSON("", source: "t").isEmpty)
         XCTAssertTrue(WordDefinition.fromModelJSON("no json here", source: "t").isEmpty)
