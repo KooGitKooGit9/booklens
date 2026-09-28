@@ -87,7 +87,7 @@ final class WebPageBench: NSObject, WKNavigationDelegate {
         guard let json = try? await webView.evaluateJavaScript(js) as? String,
               let raw = try? JSONSerialization.jsonObject(with: Data(json.utf8)) as? [[Any]] else { return nil }
         let config = WKSnapshotConfiguration()
-        config.snapshotWidth = NSNumber(value: Double(style.width * 2))
+        config.snapshotWidth = NSNumber(value: Double(style.width)) // points; a Retina backing gives 2x pixels
         guard let snapshot = try? await webView.takeSnapshot(configuration: config),
               let cg = snapshot.cgImage(forProposedRect: nil, context: nil, hints: nil) else { return nil }
         let scale = CGFloat(cg.width) / style.width

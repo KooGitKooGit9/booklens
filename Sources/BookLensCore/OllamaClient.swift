@@ -53,7 +53,7 @@ public final class OllamaClient: @unchecked Sendable {
 
     /// Loads a model into memory so the first real lookup is fast.
     public func warmUp(model: String) async throws {
-        let body: [String: Any] = ["model": model, "messages": [] as [Any], "keep_alive": "30m"]
+        let body: [String: Any] = ["model": model, "messages": [] as [Any], "keep_alive": "1h"]
         var request = jsonRequest(path: "api/chat", body: body)
         request.timeoutInterval = 180
         _ = try await send(request)
@@ -93,7 +93,7 @@ public final class OllamaClient: @unchecked Sendable {
             "model": model,
             "messages": messages.map { ["role": $0.role, "content": $0.content] },
             "stream": true,
-            "keep_alive": "30m",
+            "keep_alive": "1h",
             "think": false,
             "options": options,
         ]

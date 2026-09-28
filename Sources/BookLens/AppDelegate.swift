@@ -27,6 +27,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         trigger.start()
 
         setUpStatusItem()
+        installDebugHooks()
         settings.$enabled.sink { [weak self] enabled in
             DispatchQueue.main.async {
                 self?.updateStatusIcon()
@@ -51,6 +52,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
         if !flag { showVocabulary() }
         return true
+    }
+
+    /// For automated smoke tests only: `defaults write com.booklens.app debugHooks -bool YES`, then post
+    /// the distributed notification "com.booklens.debug.lookup" with object "x,y" (Cocoa global points).
+    private func installDebugHooks() {
+        guard UserDefaults.standard.bool(forKey: "debugHooks") else { return }
+        DistributedNotificationCenter.default().addObserver(forName: Notification.Name("com.booklens.debug.lookup"), object: nil, queue: .main) { [weak self] note in
+            let parts = (note.object as? String ?? "").split(separator: ",").compactMap { Double($0) }
+            guard parts.count == 2 else { return }
+            MainActor.assumeIsolated { self?.coordinator.lookUp(at: CGPoint(x: parts[0], y: parts[1]), force: true) }
+        }
+        // Object "path|px|py": treat the image as if captured at 2x with pixel (px, py) under the cursor.
+        DistributedNotificationCenter.default().addObserver(forName: Notification.Name("com.booklens.debug.lookupImage"), object: nil, queue: .main) { [weak self] note in
+            let parts = (note.object as? String ?? "").split(separator: "|").map(String.init)
+            log.error("debug lookupImage: \(parts, privacy: .public)")
+            guard parts.count == 3, let px = Double(parts[1]), let py = Double(parts[2]),
+                  let src = CGImageSourceCreateWithURL(URL(fileURLWithPath: parts[0]) as CFURL, nil),
+                  let image = CGImageSourceCreateImageAtIndex(src, 0, nil) else { return }
+            let cursor = NSEvent.mouseLocation
+            let scale: CGFloat = 2
+            let frame = CGRect(x: cursor.x - px / scale, y: cursor.y - (CGFloat(image.height) - py) / scale,
+                               width: CGFloat(image.width) / scale, height: CGFloat(image.height) / scale)
+            MainActor.assumeIsolated {
+                self?.coordinator.lookUp(at: cursor, injected: CapturedRegion(image: image, frame: frame, scale: scale))
+            }
+        }
     }
 
     // MARK: - Status item

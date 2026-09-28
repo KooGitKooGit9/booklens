@@ -46,6 +46,8 @@ final class OverlayController {
     private let popup = FloatingPanel(clickThrough: false)
     private let highlight = FloatingPanel(clickThrough: true)
     private var hosting: FirstMouseHostingView<PopupView>!
+    /// Separate controller used only to measure the popup's ideal height.
+    private var measurer: NSHostingController<PopupView>!
     private var wordRect: CGRect = .zero
     private var placedBelow = true
     private var mouseDownMonitor: Any?
@@ -59,6 +61,7 @@ final class OverlayController {
     init() {
         hosting = FirstMouseHostingView(rootView: PopupView(state: state))
         hosting.sizingOptions = []
+        measurer = NSHostingController(rootView: PopupView(state: state))
         popup.contentView = hosting
         highlight.contentView = NSHostingView(rootView: HighlightView())
         stateObserver = state.objectWillChange.sink { [weak self] in
@@ -106,8 +109,7 @@ final class OverlayController {
     }
 
     private func fittingSize() -> CGSize {
-        hosting.layoutSubtreeIfNeeded()
-        let size = hosting.fittingSize
+        let size = measurer.sizeThatFits(in: CGSize(width: PopupView.width, height: 2000))
         return CGSize(width: PopupView.width, height: max(40, ceil(size.height)))
     }
 

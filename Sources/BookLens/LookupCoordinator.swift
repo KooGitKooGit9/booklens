@@ -62,6 +62,15 @@ final class LookupCoordinator {
         awaySince = nil
     }
 
+    /// Debug only: runs the pipeline on a supplied image instead of a screen capture.
+    func lookUp(at point: CGPoint, injected region: CapturedRegion) {
+        lastPoint = point
+        task?.cancel()
+        task = Task { [weak self] in
+            await self?.run(at: point, injected: region)
+        }
+    }
+
     func lookUp(at point: CGPoint, force: Bool = false) {
         if overlay.isVisible, overlay.popupFrame.contains(point) { return }
         if !force, overlay.isVisible, overlay.currentWordRect.insetBy(dx: -1, dy: -1).contains(point) { return }
@@ -72,11 +81,15 @@ final class LookupCoordinator {
         }
     }
 
-    private func run(at point: CGPoint) async {
+    private func run(at point: CGPoint, injected: CapturedRegion? = nil) async {
         let started = Date()
         let region: CapturedRegion
         do {
-            region = try await capturer.capture(around: point)
+            if let injected {
+                region = injected
+            } else {
+                region = try await capturer.capture(around: point)
+            }
         } catch let error as CaptureError {
             if Task.isCancelled { return }
             showError(error.localizedDescription + (error == .permissionDenied ? "\n시스템 설정 → 개인정보 보호 및 보안 → 화면 및 시스템 오디오 녹음에서 BookLens를 켜 주세요." : ""),
@@ -102,12 +115,12 @@ final class LookupCoordinator {
         if Task.isCancelled { return }
 
         guard let hit = WordLocator.locate(point: region.imagePoint(for: point), in: lines, imageSize: CGSize(width: image.width, height: image.height)) else {
-            log.debug("No word at point (\(lines.count) lines)")
+            log.error("No word at point (\(lines.count) lines)")
             if overlay.isVisible, !overlay.isNear(point) { dismiss() }
             return
         }
         let recognized = Date()
-        log.info("Word '\(hit.word)' capture \(Int(captured.timeIntervalSince(started) * 1000))ms, OCR \(Int(recognized.timeIntervalSince(captured) * 1000))ms")
+        log.error("Word '\(hit.word, privacy: .public)' capture \(Int(captured.timeIntervalSince(started) * 1000))ms, OCR \(Int(recognized.timeIntervalSince(captured) * 1000))ms")
 
         let request = LookupRequest(word: hit.word, sentence: hit.sentence, context: hit.context)
         let wordRect = region.globalRect(for: hit.rect)
