@@ -35,6 +35,9 @@ final class WebPageBench: NSObject, WKNavigationDelegate {
         Style(name: "large-times", css: "body{background:#fdfdf8;color:#000;font-family:'Times New Roman',serif;font-size:24px;line-height:1.5;padding:40px 60px;} a{color:#0645ad}", width: 1100, height: 1400),
     ]
 
+    /// Simulate a non-Retina (1x) display: render at 1x, then upscale to 2x like the app's capture does.
+    var simulateNonRetina = false
+
     private let webView: WKWebView
     private let window: NSWindow
     private var navigationContinuation: CheckedContinuation<Void, Never>?
@@ -66,6 +69,20 @@ final class WebPageBench: NSObject, WKNavigationDelegate {
             webView.loadHTMLString(html, baseURL: nil)
         }
         try? await Task.sleep(for: .milliseconds(300))
+        _ = try? await webView.evaluateJavaScript("document.fonts.ready.then(() => true)")
+        try? await Task.sleep(for: .milliseconds(200))
+        let config = WKSnapshotConfiguration()
+        config.snapshotWidth = NSNumber(value: Double(simulateNonRetina ? style.width / 2 : style.width)) // points; Retina gives 2x pixels
+        guard let snapshot = try? await webView.takeSnapshot(configuration: config),
+              var cg = snapshot.cgImage(forProposedRect: nil, context: nil, hints: nil) else { return nil }
+        if simulateNonRetina {
+            let w = Int(style.width * 2), h = cg.height * w / cg.width
+            let ctx = CGContext(data: nil, width: w, height: h, bitsPerComponent: 8, bytesPerRow: 0, space: CGColorSpaceCreateDeviceRGB(),
+                                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+            ctx.interpolationQuality = .high
+            ctx.draw(cg, in: CGRect(x: 0, y: 0, width: w, height: h))
+            cg = ctx.makeImage()!
+        }
         let js = """
         (() => {
           const out = [];
@@ -86,10 +103,6 @@ final class WebPageBench: NSObject, WKNavigationDelegate {
         """
         guard let json = try? await webView.evaluateJavaScript(js) as? String,
               let raw = try? JSONSerialization.jsonObject(with: Data(json.utf8)) as? [[Any]] else { return nil }
-        let config = WKSnapshotConfiguration()
-        config.snapshotWidth = NSNumber(value: Double(style.width)) // points; a Retina backing gives 2x pixels
-        guard let snapshot = try? await webView.takeSnapshot(configuration: config),
-              let cg = snapshot.cgImage(forProposedRect: nil, context: nil, hints: nil) else { return nil }
         let scale = CGFloat(cg.width) / style.width
         let boxes = raw.compactMap { a -> WordBox? in
             guard let t = a[0] as? String, let x = a[1] as? Double, let y = a[2] as? Double, let w = a[3] as? Double, let h = a[4] as? Double else { return nil }
@@ -107,7 +120,7 @@ final class WebPageBench: NSObject, WKNavigationDelegate {
 
     /// End-to-end: render → crop like the app → OCR → locate → local model definition.
     func runEndToEnd(model: String, targets: [String]) async {
-        let recognizer = TextRecognizer()
+        let reader = WordReader()
         let provider = OllamaMeaningProvider(model: model)
         for style in [Self.styles[0], Self.styles[1], Self.styles[2]] {
             for passage in Self.passages {
@@ -117,8 +130,7 @@ final class WebPageBench: NSObject, WKNavigationDelegate {
                     let center = CGPoint(x: box.rect.midX, y: box.rect.midY)
                     guard let (crop, local) = Self.crop(image, around: center, halfWidth: CGFloat(image.width), halfHeight: 400) else { continue }
                     let t0 = Date()
-                    let lines = (try? recognizer.recognize(crop)) ?? []
-                    guard let hit = WordLocator.locate(point: local, in: lines, imageSize: CGSize(width: crop.width, height: crop.height)) else { print("\(style.name) \(target): NO HIT"); continue }
+                    guard let hit = try? reader.read(crop, at: local) else { print("\(style.name) \(target): NO HIT"); continue }
                     let t1 = Date()
                     var firstMeaning: Date?
                     var def = WordDefinition()
@@ -141,7 +153,7 @@ final class WebPageBench: NSObject, WKNavigationDelegate {
     }
 
     func run(samplesPerPage: Int, dumpDir: URL?) async -> Bool {
-        let recognizer = TextRecognizer()
+        let reader = WordReader()
         var totalHits = 0, totalCorrect = 0
         var ocrTimes: [Double] = []
         var allOK = true
@@ -165,16 +177,15 @@ final class WebPageBench: NSObject, WKNavigationDelegate {
                     // Same capture band as the app: full window width × ±200 points at 2x.
                     guard let (crop, local) = Self.crop(image, around: center, halfWidth: CGFloat(image.width), halfHeight: 400) else { continue }
                     let t0 = Date()
-                    let lines = (try? recognizer.recognize(crop)) ?? []
+                    let hit = try? reader.read(crop, at: local)
                     ocrTimes.append(Date().timeIntervalSince(t0))
-                    let hit = WordLocator.locate(point: local, in: lines, imageSize: CGSize(width: crop.width, height: crop.height))
                     total += 1
                     let expected = Tokenizer.normalize(box.text).lowercased()
                     if let hit, hit.word.lowercased() == expected {
                         correct += 1
                         if !hit.sentence.lowercased().contains(expected) { misses.append("sentence?\(expected)") }
                     } else {
-                        misses.append("\(box.text)→\(hit?.word ?? "nil")")
+                        misses.append("\(box.text)→\(hit?.word ?? "nil")@\(Int(center.x)),\(Int(center.y))")
                     }
                 }
                 totalHits += total

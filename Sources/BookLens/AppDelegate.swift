@@ -66,7 +66,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // Object "path|px|py": treat the image as if captured at 2x with pixel (px, py) under the cursor.
         DistributedNotificationCenter.default().addObserver(forName: Notification.Name("com.booklens.debug.lookupImage"), object: nil, queue: .main) { [weak self] note in
             let parts = (note.object as? String ?? "").split(separator: "|").map(String.init)
-            log.error("debug lookupImage: \(parts, privacy: .public)")
             guard parts.count == 3, let px = Double(parts[1]), let py = Double(parts[2]),
                   let src = CGImageSourceCreateWithURL(URL(fileURLWithPath: parts[0]) as CFURL, nil),
                   let image = CGImageSourceCreateImageAtIndex(src, 0, nil) else { return }

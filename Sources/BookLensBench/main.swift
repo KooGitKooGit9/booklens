@@ -1,4 +1,5 @@
 import AppKit
+import ImageIO
 import BookLensCore
 import Foundation
 
@@ -64,12 +65,27 @@ switch args.first {
 case "models":
     let models = args.count > 1 ? Array(args.dropFirst()) : ["qwen2.5:7b-instruct", "exaone3.5:2.4b", "gemma3:4b"]
     await runModels(models)
-case "web":
+case "web", "web1x":
+    let nonRetina = args.first == "web1x"
     let dump = args.count > 1 ? URL(fileURLWithPath: args[1]) : nil
     if let dump { try? FileManager.default.createDirectory(at: dump, withIntermediateDirectories: true) }
     _ = NSApplication.shared
-    let ok = await MainActor.run { WebPageBench() }.run(samplesPerPage: 40, dumpDir: dump)
+    let bench = await MainActor.run { () -> WebPageBench in
+        let b = WebPageBench()
+        b.simulateNonRetina = nonRetina
+        return b
+    }
+    let ok = await bench.run(samplesPerPage: 40, dumpDir: dump)
     exit(ok ? 0 : 1)
+case "probe":
+    // probe <image> <x> <y>: crop a band like the app, OCR, and show lines + hit.
+    let src = CGImageSourceCreateWithURL(URL(fileURLWithPath: args[1]) as CFURL, nil)!
+    let image = CGImageSourceCreateImageAtIndex(src, 0, nil)!
+    let p = CGPoint(x: Double(args[2])!, y: Double(args[3])!)
+    let (crop, local) = await MainActor.run { WebPageBench.crop(image, around: p, halfWidth: CGFloat(image.width), halfHeight: 400)! }
+    let lines = try TextRecognizer().recognize(crop)
+    for l in lines { print(Int(l.rect.minY), Int(l.rect.height), l.words.prefix(4).map { "\($0.text)@\(Int($0.rect.minX))-\(Int($0.rect.maxX)),\(Int($0.rect.minY))" }) }
+    print("local", local, "hit:", WordLocator.locate(point: local, in: lines, imageSize: CGSize(width: crop.width, height: crop.height)) as Any)
 case "e2e":
     _ = NSApplication.shared
     let model = args.count > 1 ? args[1] : "qwen3:8b"

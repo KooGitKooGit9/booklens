@@ -12,7 +12,7 @@ final class LookupCoordinator {
     let store: VocabStore
     let overlay = OverlayController()
     let capturer = ScreenCapturer()
-    private let recognizer = TextRecognizer()
+    private let reader = WordReader()
     private let cache = LookupCache()
     private var task: Task<Void, Never>?
     private var shownRequest: LookupRequest?
@@ -103,24 +103,25 @@ final class LookupCoordinator {
         if Task.isCancelled { return }
         let captured = Date()
 
-        let recognizer = self.recognizer
+        let reader = self.reader
         let image = region.image
-        let lines: [RecognizedLine]
+        let imagePoint = region.imagePoint(for: point)
+        let found: WordHit?
         do {
-            lines = try await Task.detached(priority: .userInitiated) { try recognizer.recognize(image) }.value
+            found = try await Task.detached(priority: .userInitiated) { try reader.read(image, at: imagePoint) }.value
         } catch {
             log.error("OCR failed: \(error.localizedDescription)")
             return
         }
         if Task.isCancelled { return }
 
-        guard let hit = WordLocator.locate(point: region.imagePoint(for: point), in: lines, imageSize: CGSize(width: image.width, height: image.height)) else {
-            log.error("No word at point (\(lines.count) lines)")
+        guard let hit = found else {
+            log.debug("No word at point")
             if overlay.isVisible, !overlay.isNear(point) { dismiss() }
             return
         }
         let recognized = Date()
-        log.error("Word '\(hit.word, privacy: .public)' capture \(Int(captured.timeIntervalSince(started) * 1000))ms, OCR \(Int(recognized.timeIntervalSince(captured) * 1000))ms")
+        log.info("Word '\(hit.word, privacy: .public)' capture \(Int(captured.timeIntervalSince(started) * 1000))ms, OCR \(Int(recognized.timeIntervalSince(captured) * 1000))ms")
 
         let request = LookupRequest(word: hit.word, sentence: hit.sentence, context: hit.context)
         let wordRect = region.globalRect(for: hit.rect)

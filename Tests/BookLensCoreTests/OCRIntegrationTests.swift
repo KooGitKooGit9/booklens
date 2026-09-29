@@ -114,3 +114,20 @@ final class OCRIntegrationTests: XCTestCase {
         XCTAssertLessThan(elapsed, 1.5)
     }
 }
+
+final class WordReaderTests: XCTestCase {
+    func testSameAcceptsLineBreakHalves() {
+        XCTAssertTrue(WordReader.same("inves", "investigation"))
+        XCTAssertTrue(WordReader.same("tigation", "Investigation"))
+        XCTAssertFalse(WordReader.same("minds", "acknowledged"))
+    }
+
+    func testReaderFindsWordOnRenderedPage() throws {
+        let rendered = OCRIntegrationTests().render(OCRIntegrationTests.passage, fontName: "Georgia", size: 16)
+        for target in ["acknowledged", "neighbourhood", "obstinate"] {
+            let box = try XCTUnwrap(rendered.boxes.first { $0.0 == target }).1
+            let hit = try XCTUnwrap(WordReader().read(rendered.image, at: CGPoint(x: box.midX, y: box.midY)))
+            XCTAssertEqual(hit.word, target)
+        }
+    }
+}

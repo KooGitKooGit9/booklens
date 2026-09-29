@@ -20,8 +20,15 @@ app.setActivationPolicy(.accessory)
 
 MainActor.assumeIsolated {
     if arguments.count >= 3, arguments[1] == "--render-popup" {
-        DiagnosticTools.renderPopups(to: URL(fileURLWithPath: arguments[2]))
-        exit(0)
+        let dir = URL(fileURLWithPath: arguments[2])
+        DiagnosticTools.renderPopups(to: dir)
+        let ollama = OllamaManager()
+        Task { @MainActor in
+            await ollama.refresh()
+            DiagnosticTools.renderWindows(to: dir, ollama: ollama)
+            exit(0)
+        }
+        app.run()
     }
     let delegate = AppDelegate()
     app.delegate = delegate

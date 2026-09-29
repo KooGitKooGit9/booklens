@@ -12,14 +12,14 @@ enum DiagnosticTools {
             return 1
         }
         let t0 = Date()
-        let lines: [RecognizedLine]
-        do { lines = try TextRecognizer().recognize(image) } catch {
+        let found: WordHit?
+        do { found = try WordReader().read(image, at: CGPoint(x: x, y: y)) } catch {
             print("{\"error\":\"ocr failed\"}")
             return 1
         }
         let t1 = Date()
-        guard let hit = WordLocator.locate(point: CGPoint(x: x, y: y), in: lines, imageSize: CGSize(width: image.width, height: image.height)) else {
-            print("{\"error\":\"no word\",\"lines\":\(lines.count),\"ocr_ms\":\(Int(t1.timeIntervalSince(t0) * 1000))}")
+        guard let hit = found else {
+            print("{\"error\":\"no word\",\"ocr_ms\":\(Int(t1.timeIntervalSince(t0) * 1000))}")
             return 2
         }
         let request = LookupRequest(word: hit.word, sentence: hit.sentence, context: hit.context)
@@ -58,6 +58,34 @@ enum DiagnosticTools {
         let data = try! JSONSerialization.data(withJSONObject: output, options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes])
         print(String(data: data, encoding: .utf8)!)
         return 0
+    }
+
+    @MainActor
+    static func renderWindows(to directory: URL, ollama: OllamaManager) {
+        let store = VocabStore(fileURL: FileManager.default.temporaryDirectory.appendingPathComponent("render-vocab.json"))
+        store.removeAll()
+        store.record(word: "obstinate", definition: WordDefinition(expression: "obstinate", lemma: "obstinate", partOfSpeech: "형용사", meaning: "고집스러운, 완강한", ipa: "/ˈɑːbstɪnət/", otherMeanings: ["끈질긴", "잘 낫지 않는"]), sentence: "The ephemeral splendour of the evening faded, yet she refused to give up on her obstinate hopes.", sourceTitle: "Pride and Prejudice - RIDI")
+        store.record(word: "gave", definition: WordDefinition(expression: "give up", lemma: "give", partOfSpeech: "구동사", meaning: "포기하다", ipa: "/ɡɪv ʌp/", otherMeanings: ["주다"]), sentence: "After three failed attempts, he finally gave up on the idea.", sourceTitle: "Kindle Cloud Reader")
+        let views: [(String, AnyView, CGSize)] = [
+            ("setup", AnyView(SetupView(ollama: ollama, onDone: {}).background(Color(nsColor: .windowBackgroundColor))), CGSize(width: 560, height: 0)),
+            ("settings", AnyView(SettingsView(ollama: ollama)), CGSize(width: 520, height: 0)),
+            ("vocabulary", AnyView(VocabularyView(model: VocabularyModel(store: store))), CGSize(width: 900, height: 420)),
+        ]
+        for (name, view, size) in views {
+            let window = NSWindow(contentRect: CGRect(x: -5000, y: -5000, width: 600, height: 400), styleMask: [.titled], backing: .buffered, defer: false)
+            let host = NSHostingView(rootView: view)
+            window.contentView = host
+            let fit = host.fittingSize
+            let finalSize = CGSize(width: size.width, height: size.height > 0 ? size.height : fit.height)
+            window.setContentSize(finalSize)
+            host.layoutSubtreeIfNeeded()
+            RunLoop.main.run(until: Date().addingTimeInterval(1.5))
+            guard let rep = host.bitmapImageRepForCachingDisplay(in: host.bounds) else { continue }
+            host.cacheDisplay(in: host.bounds, to: rep)
+            let url = directory.appendingPathComponent("window-\(name).png")
+            try? rep.representation(using: .png, properties: [:])?.write(to: url)
+            print(url.path)
+        }
     }
 
     /// Renders the popup in several states and appearances to PNG files.

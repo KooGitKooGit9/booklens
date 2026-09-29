@@ -271,3 +271,18 @@ extension OllamaClient.OllamaError: Equatable {
         }
     }
 }
+
+final class CapturedRegionTests: XCTestCase {
+    func testRoundTripBetweenScreenAndImageCoordinates() {
+        let ctx = CGContext(data: nil, width: 400, height: 200, bitsPerComponent: 8, bytesPerRow: 0,
+                            space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+        // A 200×100 pt band whose bottom-left corner is at (100, 500) in Cocoa coordinates, captured at 2x.
+        let region = CapturedRegion(image: ctx.makeImage()!, frame: CGRect(x: 100, y: 500, width: 200, height: 100), scale: 2)
+        XCTAssertEqual(region.imagePoint(for: CGPoint(x: 100, y: 600)), CGPoint(x: 0, y: 0)) // top-left
+        XCTAssertEqual(region.imagePoint(for: CGPoint(x: 300, y: 500)), CGPoint(x: 400, y: 200)) // bottom-right
+        let wordInImage = CGRect(x: 40, y: 20, width: 60, height: 30)
+        let onScreen = region.globalRect(for: wordInImage)
+        XCTAssertEqual(onScreen, CGRect(x: 120, y: 575, width: 30, height: 15))
+        XCTAssertEqual(region.imagePoint(for: CGPoint(x: onScreen.minX, y: onScreen.maxY)), CGPoint(x: 40, y: 20))
+    }
+}

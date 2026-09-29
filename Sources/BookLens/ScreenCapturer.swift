@@ -1,28 +1,7 @@
 import AppKit
+import BookLensCore
 import CoreGraphics
 import ScreenCaptureKit
-
-/// A captured region of the screen and how to map between its pixels and global screen coordinates.
-struct CapturedRegion {
-    var image: CGImage
-    /// Captured area in Cocoa global coordinates (origin bottom-left of the primary screen), in points.
-    var frame: CGRect
-    /// Pixels per point.
-    var scale: CGFloat
-
-    /// Converts a global Cocoa point to image pixel coordinates (origin top-left).
-    func imagePoint(for global: CGPoint) -> CGPoint {
-        CGPoint(x: (global.x - frame.minX) * scale, y: (frame.maxY - global.y) * scale)
-    }
-
-    /// Converts an image pixel rect (origin top-left) back to global Cocoa coordinates.
-    func globalRect(for imageRect: CGRect) -> CGRect {
-        CGRect(x: frame.minX + imageRect.minX / scale,
-               y: frame.maxY - imageRect.maxY / scale,
-               width: imageRect.width / scale,
-               height: imageRect.height / scale)
-    }
-}
 
 enum CaptureError: LocalizedError, Equatable {
     case permissionDenied
