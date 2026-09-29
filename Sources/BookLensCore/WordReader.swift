@@ -10,7 +10,9 @@ import Foundation
 public struct WordReader: Sendable {
     public var recognizer: TextRecognizer
 
-    public init(recognizer: TextRecognizer = TextRecognizer()) {
+    /// Language correction is off: it costs ~110 ms per lookup and made no difference to word accuracy
+    /// in the WebKit bench (496/496 at 2x, 492 vs 493/496 at 1x).
+    public init(recognizer: TextRecognizer = TextRecognizer(usesLanguageCorrection: false)) {
         self.recognizer = recognizer
     }
 

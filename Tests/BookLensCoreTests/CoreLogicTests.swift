@@ -286,3 +286,15 @@ final class CapturedRegionTests: XCTestCase {
         XCTAssertEqual(region.imagePoint(for: CGPoint(x: onScreen.minX, y: onScreen.maxY)), CGPoint(x: 40, y: 20))
     }
 }
+
+final class PromptTests: XCTestCase {
+    func testSchemaIsValidJSONWithFieldsInOrder() throws {
+        let data = Data(Prompt.schema.utf8)
+        let object = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        XCTAssertEqual(object["required"] as? [String], Prompt.fieldOrder)
+        // Ollama emits fields in the order the properties are written, so check the raw text.
+        let positions = Prompt.fieldOrder.map { Prompt.schema.range(of: "\"\($0)\":{")!.lowerBound }
+        XCTAssertEqual(positions, positions.sorted())
+        XCTAssertEqual(Prompt.fieldOrder.prefix(2), ["expression", "meaning"])
+    }
+}

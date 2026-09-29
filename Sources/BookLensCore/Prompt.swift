@@ -22,7 +22,7 @@ public enum Prompt {
     """
 
     public static let exampleAssistant = """
-    {"expression":"bank","lemma":"bank","pos":"명사","meaning":"(강·호수의) 둑, 기슭","ipa":"/bæŋk/","explanation":"강(river)과 함께 쓰여 물가의 비탈진 땅을 가리킨다.","other_meanings":["은행","저장소","(비행기의) 경사 선회"]}
+    {"expression":"bank","meaning":"(강·호수의) 둑, 기슭","lemma":"bank","pos":"명사","ipa":"/bæŋk/","explanation":"강(river)과 함께 쓰여 물가의 비탈진 땅을 가리킨다.","other_meanings":["은행","저장소","(비행기의) 경사 선회"]}
     """
 
     public static let example2User = """
@@ -31,7 +31,7 @@ public enum Prompt {
     """
 
     public static let example2Assistant = """
-    {"expression":"look after","lemma":"look","pos":"구동사","meaning":"~을 돌보다, 보살피다","ipa":"/lʊk ˈæftər/","explanation":"after와 함께 쓰여 누군가를 돌본다는 뜻이다.","other_meanings":["보다","~처럼 보이다","향하다"]}
+    {"expression":"look after","meaning":"~을 돌보다, 보살피다","lemma":"look","pos":"구동사","ipa":"/lʊk ˈæftər/","explanation":"after와 함께 쓰여 누군가를 돌본다는 뜻이다.","other_meanings":["보다","~처럼 보이다","향하다"]}
     """
 
     public static func user(for request: LookupRequest) -> String {
@@ -43,18 +43,20 @@ public enum Prompt {
         return text
     }
 
-    /// JSON schema passed to Ollama's structured output. Field order matters: "meaning" streams early.
-    public static let schema: [String: Any] = [
-        "type": "object",
-        "properties": [
-            "expression": ["type": "string"],
-            "lemma": ["type": "string"],
-            "pos": ["type": "string"],
-            "meaning": ["type": "string"],
-            "ipa": ["type": "string"],
-            "explanation": ["type": "string"],
-            "other_meanings": ["type": "array", "items": ["type": "string"], "maxItems": 3],
-        ],
-        "required": ["expression", "lemma", "pos", "meaning", "ipa", "explanation", "other_meanings"],
-    ]
+    /// JSON schema passed to Ollama's structured output, as raw JSON: Ollama generates the fields in the
+    /// order written here, and a Swift dictionary would serialize them in a random order on each launch.
+    /// "meaning" streams right after "expression" (~0.5 s sooner than after lemma/pos). Putting "meaning"
+    /// first is faster still but loses context: without naming the expression first the model falls back
+    /// to the common sense.
+    public static let fieldOrder = ["expression", "meaning", "lemma", "pos", "ipa", "explanation", "other_meanings"]
+
+    public static let schema: String = {
+        let properties = fieldOrder.map { name in
+            name == "other_meanings"
+                ? #""other_meanings":{"type":"array","items":{"type":"string"},"maxItems":3}"#
+                : #""\#(name)":{"type":"string"}"#
+        }
+        let required = fieldOrder.map { "\"\($0)\"" }
+        return #"{"type":"object","properties":{"# + properties.joined(separator: ",") + #"},"required":["# + required.joined(separator: ",") + "]}"
+    }()
 }

@@ -87,9 +87,9 @@ public final class OllamaClient: @unchecked Sendable {
     }
 
     /// Streams content chunks of a chat completion.
-    public func chatStream(model: String, messages: [ChatMessage], format: [String: Any]?,
+    public func chatStream(model: String, messages: [ChatMessage], format: String?,
                            options: [String: Any] = [:]) -> AsyncThrowingStream<String, Error> {
-        var body: [String: Any] = [
+        let body: [String: Any] = [
             "model": model,
             "messages": messages.map { ["role": $0.role, "content": $0.content] },
             "stream": true,
@@ -97,8 +97,11 @@ public final class OllamaClient: @unchecked Sendable {
             "think": false,
             "options": options,
         ]
-        if let format { body["format"] = format }
-        let request = jsonRequest(path: "api/chat", body: body)
+        var request = jsonRequest(path: "api/chat", body: body)
+        if let format, let json = request.httpBody, json.first == UInt8(ascii: "{") {
+            // Spliced in as raw JSON to keep the schema's property order (see Prompt.schema).
+            request.httpBody = Data("{\"format\":\(format),".utf8) + json.dropFirst()
+        }
         return AsyncThrowingStream { continuation in
             let task = Task {
                 do {
