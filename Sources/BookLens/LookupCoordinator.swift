@@ -102,6 +102,15 @@ final class LookupCoordinator {
         }
         if Task.isCancelled { return }
         let captured = Date()
+        if let dumpPath = UserDefaults.standard.string(forKey: "debugCaptureDump") {
+            // Smoke tests only: `defaults write com.booklens.app debugCaptureDump /path/capture.png`.
+            let url = URL(fileURLWithPath: dumpPath) as CFURL
+            if let dest = CGImageDestinationCreateWithURL(url, "public.png" as CFString, 1, nil) {
+                CGImageDestinationAddImage(dest, region.image, nil)
+                CGImageDestinationFinalize(dest)
+            }
+            log.info("Captured \(Int(region.frame.minX)),\(Int(region.frame.minY)) \(Int(region.frame.width))x\(Int(region.frame.height)) at \(Int(point.x)),\(Int(point.y))")
+        }
 
         let reader = self.reader
         let image = region.image
