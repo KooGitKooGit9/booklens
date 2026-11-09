@@ -15,6 +15,11 @@ struct SettingsView: View {
                         Text(mode.title).tag(mode)
                     }
                 }
+                if settings.triggerMode != .dwell {
+                    Text("키를 누른 채 마우스로 문장 위를 훑고 손을 떼면 문장 전체를 번역합니다.")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                }
                 if settings.triggerMode == .dwell {
                     LabeledContent("멈춤 시간") {
                         HStack {
@@ -28,7 +33,7 @@ struct SettingsView: View {
 
             Section("팝업") {
                 Toggle("뜻 설명 문장 보이기", isOn: $settings.showExplanation)
-                Toggle("다른 뜻 보이기", isOn: $settings.showOtherMeanings)
+                Toggle("사전 뜻 보이기", isOn: $settings.showOtherMeanings)
                 Toggle("찾은 단어를 단어장에 자동 저장", isOn: $settings.autoSave)
             }
 
@@ -43,6 +48,7 @@ struct SettingsView: View {
             }
 
             Section("일반") {
+                Toggle("메뉴 막대에 아이콘 보이기", isOn: $settings.showMenuBarIcon)
                 Toggle("로그인 시 자동 실행", isOn: $launchAtLogin)
                     .onChange(of: launchAtLogin) { _, enabled in
                         do {

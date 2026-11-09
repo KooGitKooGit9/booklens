@@ -12,16 +12,10 @@ public struct OllamaMeaningProvider: MeaningProvider {
     }
 
     public func lookup(_ request: LookupRequest) -> AsyncThrowingStream<LookupEvent, Error> {
-        let messages = [
-            OllamaClient.ChatMessage(role: "system", content: Prompt.system),
-            OllamaClient.ChatMessage(role: "user", content: Prompt.exampleUser),
-            OllamaClient.ChatMessage(role: "assistant", content: Prompt.exampleAssistant),
-            OllamaClient.ChatMessage(role: "user", content: Prompt.user(for: request)),
-        ]
         let stream = client.chatStream(
             model: model,
-            messages: messages,
-            format: Prompt.schema,
+            messages: Prompt.messages(for: request),
+            format: Prompt.schema(dictionary: request.dictionary != nil),
             options: ["temperature": 0.1, "num_predict": 320, "num_ctx": 2048]
         )
         let source = "ollama:\(model)"
@@ -29,19 +23,65 @@ public struct OllamaMeaningProvider: MeaningProvider {
             let task = Task {
                 var buffer = ""
                 var last = WordDefinition()
+                let dictionary = request.dictionary
+                func parse() -> WordDefinition {
+                    var def = WordDefinition.fromModelJSON(buffer, source: source)
+                    def.dictionary = dictionary
+                    if let dictionary {
+                        def.ipa = dictionary.ipa
+                        def.lemma = dictionary.headword
+                    }
+                    return def
+                }
                 do {
                     for try await chunk in stream {
                         buffer += chunk
-                        let def = WordDefinition.fromModelJSON(buffer, source: source)
+                        let def = parse()
                         if def != last {
                             last = def
                             continuation.yield(.partial(def))
                         }
+                        // A derailed model starts emitting markup inside the JSON strings; stop reading.
+                        // (Backticks and "</" never occur in the JSON structure itself, unlike braces.)
+                        if buffer.contains("`") || buffer.contains("</") { break }
                     }
-                    var final = WordDefinition.fromModelJSON(buffer, source: source).cleaned()
+                    var final = parse().cleaned()
                     if final.lemma.isEmpty { final.lemma = request.word.lowercased() }
                     if final.expression.isEmpty { final.expression = final.lemma }
                     continuation.yield(.complete(final))
+                    continuation.finish()
+                } catch {
+                    continuation.finish(throwing: error)
+                }
+            }
+            continuation.onTermination = { _ in task.cancel() }
+        }
+    }
+}
+
+/// Translates swept sentences into Korean with a local Ollama model.
+public struct OllamaSentenceTranslator: Sendable {
+    public var client: OllamaClient
+    public var model: String
+
+    public init(client: OllamaClient = OllamaClient(), model: String) {
+        self.client = client
+        self.model = model
+    }
+
+    /// Streams the translation so far, growing until it is complete.
+    public func translate(_ text: String) -> AsyncThrowingStream<String, Error> {
+        let stream = client.chatStream(model: model, messages: TranslationPrompt.messages(for: text), format: nil,
+                                       options: ["temperature": 0.2, "num_predict": 800, "num_ctx": 2048])
+        return AsyncThrowingStream { continuation in
+            let task = Task {
+                var buffer = ""
+                do {
+                    for try await chunk in stream {
+                        buffer += chunk
+                        continuation.yield(TranslationPrompt.clean(buffer))
+                        if buffer.contains("</") || buffer.contains("```") { break }
+                    }
                     continuation.finish()
                 } catch {
                     continuation.finish(throwing: error)
@@ -138,7 +178,12 @@ public struct SystemDictionaryProvider: MeaningProvider {
 
     public func lookup(_ request: LookupRequest) -> AsyncThrowingStream<LookupEvent, Error> {
         AsyncThrowingStream { continuation in
-            if let text = Self.definition(for: request.word) ?? Self.definition(for: request.word.lowercased()) {
+            if let entry = request.dictionary, let first = entry.groups.first {
+                continuation.yield(.complete(WordDefinition(
+                    expression: entry.headword, lemma: entry.headword, partOfSpeech: first.pos,
+                    meaning: first.glosses.first ?? "", ipa: entry.ipa,
+                    explanation: "로컬 AI를 사용할 수 없어 사전 뜻만 표시합니다.", source: "dictionary", dictionary: entry)))
+            } else if let text = Self.definition(for: request.word) ?? Self.definition(for: request.word.lowercased()) {
                 continuation.yield(.complete(Self.parse(word: request.word, text: text)))
             } else {
                 continuation.yield(.complete(WordDefinition(

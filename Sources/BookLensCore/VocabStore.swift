@@ -111,7 +111,7 @@ public final class VocabStore: @unchecked Sendable {
             let d = e.definition
             var back = [d.partOfSpeech, d.meaning].filter { !$0.isEmpty }.joined(separator: " ")
             if !d.ipa.isEmpty { back += " \(d.ipa)" }
-            if !d.otherMeanings.isEmpty { back += " / 그 외: " + d.otherMeanings.joined(separator: ", ") }
+            if !d.generalSenses.isEmpty { back += " / 사전 뜻: " + d.generalSenses.joined(separator: " / ") }
             let front = d.expression.isEmpty ? e.word : d.expression
             rows.append([front, back, e.sentence, e.sourceTitle, String(e.lookupCount), formatter.string(from: e.createdAt)]
                 .map(Self.csvField).joined(separator: ","))

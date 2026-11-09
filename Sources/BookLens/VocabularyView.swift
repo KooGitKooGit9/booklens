@@ -77,8 +77,8 @@ struct VocabularyView: View {
                         VStack(alignment: .leading, spacing: 1) {
                             Text([e.definition.partOfSpeech, e.definition.meaning].filter { !$0.isEmpty }.joined(separator: " · "))
                                 .font(.system(size: 12))
-                            if !e.definition.otherMeanings.isEmpty {
-                                Text(e.definition.otherMeanings.joined(separator: ", "))
+                            if !e.definition.generalSenses.isEmpty {
+                                Text(e.definition.generalSenses.joined(separator: " / "))
                                     .font(.system(size: 10)).foregroundStyle(.secondary).lineLimit(1)
                             }
                         }

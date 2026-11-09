@@ -16,7 +16,40 @@ public struct WordReader: Sendable {
         self.recognizer = recognizer
     }
 
+    /// Reads Hangul as Hangul. Not used for the main pass: with Korean first, English accuracy dropped
+    /// (490 vs 496/497 in the WebKit bench) and OCR got slower.
+    var koreanRecognizer = TextRecognizer(languages: ["ko-KR", "en-US"], usesLanguageCorrection: false)
+
+    /// The English recognizer reads Hangul as Latin look-alikes ("명사라고" → "DJIZI") with low confidence
+    /// (0.3, against 1.0 for real English text). Such words are re-read with Korean enabled and skipped if
+    /// they turn out to be Hangul.
+    static let lowConfidence: Float = 0.5
+
     public func read(_ image: CGImage, at point: CGPoint) throws -> WordHit? {
+        guard let hit = try readWord(image, at: point) else { return nil }
+        if hit.confidence < Self.lowConfidence, try isHangul(image, point: point, around: hit.rect) { return nil }
+        return hit
+    }
+
+    /// True if the text under `point` is Korean when read with the Korean recognizer.
+    func isHangul(_ image: CGImage, point: CGPoint, around rect: CGRect) throws -> Bool {
+        guard let (cropped, strip) = Self.strip(of: image, around: rect) else { return false }
+        let local = CGPoint(x: point.x - strip.minX, y: point.y - strip.minY)
+        return try koreanRecognizer.recognize(cropped).contains { line in
+            line.rect.insetBy(dx: -4, dy: -4).contains(local)
+                && line.text.unicodeScalars.contains { (0xAC00...0xD7A3).contains($0.value) || (0x3131...0x318E).contains($0.value) }
+        }
+    }
+
+    static func strip(of image: CGImage, around rect: CGRect) -> (CGImage, CGRect)? {
+        let h = rect.height
+        let strip = CGRect(x: rect.minX - h * 8, y: rect.minY - h * 0.35, width: rect.width + h * 16, height: h * 1.7)
+            .intersection(CGRect(x: 0, y: 0, width: image.width, height: image.height)).integral
+        guard !strip.isEmpty, let cropped = image.cropping(to: strip) else { return nil }
+        return (cropped, strip)
+    }
+
+    func readWord(_ image: CGImage, at point: CGPoint) throws -> WordHit? {
         let size = CGSize(width: image.width, height: image.height)
         let lines = try recognizer.recognize(image)
         guard let hit = WordLocator.locate(point: point, in: lines, imageSize: size) else { return nil }
@@ -39,10 +72,7 @@ public struct WordReader: Sendable {
 
     /// Recognizes a thin strip around the word; returns what it finds under `point` in image coordinates.
     func verify(_ image: CGImage, point: CGPoint, around rect: CGRect) throws -> WordHit? {
-        let h = rect.height
-        let strip = CGRect(x: rect.minX - h * 8, y: rect.minY - h * 0.35, width: rect.width + h * 16, height: h * 1.7)
-            .intersection(CGRect(x: 0, y: 0, width: image.width, height: image.height)).integral
-        guard !strip.isEmpty, let cropped = image.cropping(to: strip) else { return nil }
+        guard let (cropped, strip) = Self.strip(of: image, around: rect) else { return nil }
         let lines = try recognizer.recognize(cropped)
         guard var hit = WordLocator.locate(point: CGPoint(x: point.x - strip.minX, y: point.y - strip.minY), in: lines) else { return nil }
         hit.rect = hit.rect.offsetBy(dx: strip.minX, dy: strip.minY)

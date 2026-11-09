@@ -45,7 +45,9 @@ final class ScreenCapturer {
         }
     }
 
-    func capture(around point: CGPoint) async throws -> CapturedRegion {
+    /// - Parameter halfHeight: overrides the band's half-height, e.g. to fit a sweep across several lines.
+    func capture(around point: CGPoint, halfHeight: CGFloat? = nil) async throws -> CapturedRegion {
+        let halfHeight = halfHeight ?? self.halfHeight
         guard let screen = NSScreen.screens.first(where: { NSMouseInRect(point, $0.frame, false) }) ?? NSScreen.main else {
             throw CaptureError.noDisplay
         }

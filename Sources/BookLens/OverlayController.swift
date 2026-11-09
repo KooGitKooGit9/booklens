@@ -40,12 +40,25 @@ private struct HighlightView: View {
     }
 }
 
+/// Hosts the popup and pins it to the edge next to the word, so a window that is momentarily taller than
+/// the content (between a content change and the resize) never re-centers it and makes it jump.
+struct PopupContainer: View {
+    @ObservedObject var state: PopupState
+    var anchor: Alignment
+
+    var body: some View {
+        PopupView(state: state)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: anchor)
+    }
+}
+
 /// Shows the definition popup next to a word and a highlight over the word itself.
 final class OverlayController {
     let state = PopupState()
     private let popup = FloatingPanel(clickThrough: false)
-    private let highlight = FloatingPanel(clickThrough: true)
-    private var hosting: FirstMouseHostingView<PopupView>!
+    /// One highlight per line (a word lookup uses one, a sentence one per line it spans).
+    private var highlights: [FloatingPanel] = []
+    private var hosting: FirstMouseHostingView<PopupContainer>!
     /// Separate controller used only to measure the popup's ideal height.
     private var measurer: NSHostingController<PopupView>!
     private var wordRect: CGRect = .zero
@@ -59,22 +72,33 @@ final class OverlayController {
     var currentWordRect: CGRect { wordRect }
 
     init() {
-        hosting = FirstMouseHostingView(rootView: PopupView(state: state))
+        hosting = FirstMouseHostingView(rootView: PopupContainer(state: state, anchor: .top))
         hosting.sizingOptions = []
         measurer = NSHostingController(rootView: PopupView(state: state))
         popup.contentView = hosting
-        highlight.contentView = NSHostingView(rootView: HighlightView())
         stateObserver = state.objectWillChange.sink { [weak self] in
             DispatchQueue.main.async { self?.resizeToFit() }
         }
     }
 
-    /// Shows the popup for a word located at `rect` (global Cocoa coordinates).
-    func show(at rect: CGRect) {
+    /// Shows the popup for text located at `rect` (global Cocoa coordinates), highlighting `lines`
+    /// (default: `rect` itself).
+    func show(at rect: CGRect, lines: [CGRect]? = nil) {
         wordRect = rect
-        let padded = rect.insetBy(dx: -2, dy: -1)
-        highlight.setFrame(padded, display: true)
-        highlight.orderFrontRegardless()
+        let rects = lines ?? [rect]
+        while highlights.count < rects.count {
+            let panel = FloatingPanel(clickThrough: true)
+            panel.contentView = NSHostingView(rootView: HighlightView())
+            highlights.append(panel)
+        }
+        for (i, panel) in highlights.enumerated() {
+            if i < rects.count {
+                panel.setFrame(rects[i].insetBy(dx: -2, dy: -1), display: true)
+                panel.orderFrontRegardless()
+            } else {
+                panel.orderOut(nil)
+            }
+        }
         placePopup()
         popup.orderFrontRegardless()
         installMouseDownMonitor()
@@ -82,7 +106,7 @@ final class OverlayController {
 
     func hide() {
         popup.orderOut(nil)
-        highlight.orderOut(nil)
+        highlights.forEach { $0.orderOut(nil) }
         if let m = mouseDownMonitor {
             NSEvent.removeMonitor(m)
             mouseDownMonitor = nil
@@ -109,8 +133,10 @@ final class OverlayController {
     }
 
     private func fittingSize() -> CGSize {
-        let size = measurer.sizeThatFits(in: CGSize(width: PopupView.width, height: 2000))
-        return CGSize(width: PopupView.width, height: max(40, ceil(size.height)))
+        measurer.rootView = PopupView(state: state) // re-evaluate with the state as it is now
+        let width = PopupView.width(for: state.mode)
+        let size = measurer.sizeThatFits(in: CGSize(width: width, height: 2000))
+        return CGSize(width: width, height: max(40, ceil(size.height)))
     }
 
     private func placePopup() {
@@ -123,13 +149,19 @@ final class OverlayController {
         placedBelow = spaceBelow >= size.height + gap + 6 || spaceBelow > screen.maxY - wordRect.maxY
         var y = placedBelow ? wordRect.minY - gap - size.height : wordRect.maxY + gap
         y = min(max(y, screen.minY + 6), screen.maxY - size.height - 6)
+        hosting.rootView = PopupContainer(state: state, anchor: placedBelow ? .top : .bottom)
         popup.setFrame(CGRect(x: x, y: y, width: size.width, height: size.height), display: true)
+        popup.invalidateShadow()
     }
 
+    /// Follows the content height. While the answer streams in, the window only grows (the popup reserves
+    /// room for a typical answer, so it rarely needs to); it snaps to the exact height once the answer is done.
     private func resizeToFit() {
         guard popup.isVisible else { return }
-        let size = fittingSize()
+        var size = fittingSize()
         var frame = popup.frame
+        let streaming = state.phase == .loading || state.phase == .streaming
+        if streaming { size.height = max(size.height, frame.height) }
         guard abs(frame.height - size.height) > 0.5 else { return }
         if placedBelow {
             frame.origin.y = frame.maxY - size.height // grow downward, keep top edge
@@ -139,5 +171,6 @@ final class OverlayController {
             frame.origin.y = screen.minY + 6
         }
         popup.setFrame(frame, display: true)
+        popup.invalidateShadow()
     }
 }

@@ -24,6 +24,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         trigger = TriggerMonitor(settings: settings)
         trigger.onTrigger = { [weak self] point in self?.coordinator.lookUp(at: point) }
         trigger.onTick = { [weak self] point, held in self?.coordinator.mouseMoved(to: point, modifierHeld: held) }
+        trigger.isOnCurrentLookup = { [weak self] point in self?.coordinator.isOnCurrentLookup(point) }
+        trigger.onSweepBegan = { [weak self] in self?.coordinator.dismiss() }
+        trigger.onSweepEnded = { [weak self] path in self?.coordinator.translateSentence(along: path) }
         trigger.start()
 
         setUpStatusItem()
@@ -33,6 +36,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 self?.updateStatusIcon()
                 if !enabled { self?.coordinator.dismiss() }
             }
+        }.store(in: &cancellables)
+        settings.$showMenuBarIcon.sink { [weak self] visible in
+            DispatchQueue.main.async { self?.statusItem?.isVisible = visible }
         }.store(in: &cancellables)
 
         Task {
@@ -49,8 +55,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         ollama.stopOwnedServer()
     }
 
+    /// Launching the app again (Finder, Spotlight) while it runs. With the menu bar icon hidden this is the
+    /// only way back in, so open Settings where the icon can be turned back on.
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
-        if !flag { showVocabulary() }
+        if !settings.showMenuBarIcon {
+            showSettings()
+        } else if !flag {
+            showVocabulary()
+        }
         return true
     }
 
@@ -62,6 +74,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             let parts = (note.object as? String ?? "").split(separator: ",").compactMap { Double($0) }
             guard parts.count == 2 else { return }
             MainActor.assumeIsolated { self?.coordinator.lookUp(at: CGPoint(x: parts[0], y: parts[1]), force: true) }
+        }
+        // Object "x1,y1;x2,y2;…": a sentence sweep along those global points.
+        DistributedNotificationCenter.default().addObserver(forName: Notification.Name("com.booklens.debug.sweep"), object: nil, queue: .main) { [weak self] note in
+            let path = (note.object as? String ?? "").split(separator: ";").compactMap { pair -> CGPoint? in
+                let xy = pair.split(separator: ",").compactMap { Double($0) }
+                return xy.count == 2 ? CGPoint(x: xy[0], y: xy[1]) : nil
+            }
+            MainActor.assumeIsolated { self?.coordinator.translateSentence(along: path) }
         }
         // Object "path|px|py": treat the image as if captured at 2x with pixel (px, py) under the cursor.
         DistributedNotificationCenter.default().addObserver(forName: Notification.Name("com.booklens.debug.lookupImage"), object: nil, queue: .main) { [weak self] note in
@@ -86,6 +106,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let menu = NSMenu()
         menu.delegate = self
         statusItem.menu = menu
+        statusItem.isVisible = settings.showMenuBarIcon
         updateStatusIcon()
     }
 
@@ -118,6 +139,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.addItem(item("단어장 열기…", #selector(openVocabulary), key: "l"))
         menu.addItem(item("설정…", #selector(openSettings), key: ","))
         menu.addItem(item("설정 도우미…", #selector(openSetup), key: ""))
+        menu.addItem(item("메뉴 막대에서 아이콘 숨기기…", #selector(hideMenuBarIcon), key: ""))
         menu.addItem(.separator())
         menu.addItem(item("BookLens 종료", #selector(quit), key: "q"))
     }
@@ -154,6 +176,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     @objc private func openSettings() { showSettings() }
     @objc private func openSetup() { showSetup() }
     @objc private func quit() { NSApp.terminate(nil) }
+
+    @objc private func hideMenuBarIcon() {
+        let alert = NSAlert()
+        alert.messageText = "메뉴 막대에서 아이콘을 숨길까요?"
+        alert.informativeText = "BookLens는 계속 실행되며 단어 찾기도 그대로 동작합니다.\n\n아이콘을 다시 보이게 하려면 Finder나 Spotlight에서 BookLens를 한 번 더 실행하세요. 설정 창이 열리면 ‘메뉴 막대에 아이콘 보이기’를 켜면 됩니다."
+        alert.addButton(withTitle: "숨기기")
+        alert.addButton(withTitle: "취소")
+        NSApp.activate(ignoringOtherApps: true)
+        if alert.runModal() == .alertFirstButtonReturn {
+            settings.showMenuBarIcon = false
+        }
+    }
 
     // MARK: - Windows
 

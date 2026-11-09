@@ -104,6 +104,18 @@ final class OCRIntegrationTests: XCTestCase {
         XCTAssertEqual(hit.sentence, "The ephemeral splendour of the evening faded, yet she refused to give up on her obstinate hopes.")
     }
 
+    func testSweepFromRealOCR() throws {
+        let rendered = render(Self.passage, fontName: "Georgia", size: 18)
+        let lines = try TextRecognizer().recognize(rendered.image)
+        let from = try XCTUnwrap(rendered.boxes.first { $0.0 == "splendour" }).1
+        let to = try XCTUnwrap(rendered.boxes.first { $0.0 == "refused" }).1
+        let size = CGSize(width: rendered.image.width, height: rendered.image.height)
+        let hit = try XCTUnwrap(WordLocator.locateSentence(along: [CGPoint(x: from.midX, y: from.midY), CGPoint(x: to.midX, y: to.midY)],
+                                                           in: lines, imageSize: size))
+        XCTAssertEqual(hit.text, "The ephemeral splendour of the evening faded, yet she refused to give up on her obstinate hopes.")
+        XCTAssertFalse(hit.lineRects.isEmpty)
+    }
+
     func testRecognitionSpeed() throws {
         let rendered = render(Self.passage, fontName: "Georgia", size: 18)
         _ = try TextRecognizer().recognize(rendered.image) // warm up
@@ -128,6 +140,22 @@ final class WordReaderTests: XCTestCase {
             let box = try XCTUnwrap(rendered.boxes.first { $0.0 == target }).1
             let hit = try XCTUnwrap(WordReader().read(rendered.image, at: CGPoint(x: box.midX, y: box.midY)))
             XCTAssertEqual(hit.word, target)
+        }
+    }
+
+    /// Korean text on the page is skipped and English words next to it still read. (Synthetic renders do not
+    /// reproduce the "DJIZI" misread; it was checked on a real screenshot, where Hangul came back as "78R", "T5".)
+    func testSkipsKoreanText() throws {
+        let text = "동사인데 명사라고 표기되어있어. 전체적으로 글씨들이 투명해서 잘 안 보여. 원래 북렌즈 앱만 집중하자.\nWe can do so by having an integer counter that keeps track of the number of full buffers."
+        let page = OCRIntegrationTests().render(text, fontName: "Helvetica", size: 18)
+        let reader = WordReader()
+        for (word, box) in page.boxes {
+            let hit = try reader.read(page.image, at: CGPoint(x: box.midX, y: box.midY))
+            if word.unicodeScalars.contains(where: { $0.value >= 0xAC00 }) {
+                XCTAssertNil(hit, "Korean word \(word) was read as \(hit?.word ?? "")")
+            } else if ["counter", "integer", "buffers"].contains(word) {
+                XCTAssertEqual(hit?.word, word)
+            }
         }
     }
 }

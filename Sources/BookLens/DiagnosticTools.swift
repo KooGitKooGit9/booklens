@@ -22,7 +22,8 @@ enum DiagnosticTools {
             print("{\"error\":\"no word\",\"ocr_ms\":\(Int(t1.timeIntervalSince(t0) * 1000))}")
             return 2
         }
-        let request = LookupRequest(word: hit.word, sentence: hit.sentence, context: hit.context)
+        let request = LookupRequest(word: hit.word, sentence: hit.sentence, context: hit.context,
+                                    dictionary: KoreanDictionary.shared.lookup(hit.word))
         let provider = FallbackMeaningProvider(primary: OllamaMeaningProvider(model: model), fallback: SystemDictionaryProvider())
         var definition = WordDefinition()
         var firstMeaning: Date?
@@ -92,26 +93,36 @@ enum DiagnosticTools {
     @MainActor
     static func renderPopups(to directory: URL) {
         try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        let full = WordDefinition(expression: "give up", lemma: "give", partOfSpeech: "구동사", meaning: "(시도·희망을) 포기하다, 그만두다",
-                                  ipa: "/ɡɪv ʌp/", explanation: "여러 번 실패한 뒤 더 이상 하지 않기로 했다는 뜻이다.",
-                                  otherMeanings: ["주다", "(파티 등을) 열다", "굴복하다"], source: "ollama:qwen3:8b")
+        let fork = KoreanDictionary.shared.lookup("fork") ?? DictionaryEntry(headword: "fork", ipa: "/fɔːrk/", groups: [
+            .init(pos: "명사", glosses: ["농업용 포크, 갈퀴", "포크 모양의 것", "분기"]),
+            .init(pos: "동사", glosses: ["포크로 찌르다", "갈래지다, 분기하다", "두 가지 방향으로 발전시키다"]),
+        ])
+        let forkDone = WordDefinition(expression: "fork", lemma: "fork", partOfSpeech: "동사", meaning: "(프로세스를) 분기하다, 복제해 만들다",
+                                      ipa: fork.ipa, explanation: "자식 프로세스를 생성하는 컴퓨터 용어로 쓰인다.", source: "ollama:qwen3:8b", dictionary: fork)
+        let use = KoreanDictionary.shared.lookup("use")
         let cases: [(String, PopupState.Phase, WordDefinition, Bool)] = [
-            ("loading", .loading, WordDefinition(), false),
-            ("streaming", .streaming, WordDefinition(expression: "give up", lemma: "give", partOfSpeech: "구동사", meaning: "(시도·희망을) 포기하"), false),
-            ("done", .done, full, true),
-            ("dictionary", .done, WordDefinition(expression: "run", lemma: "run", partOfSpeech: "동사", meaning: "move at a speed faster than a walk",
-                                                 ipa: "/rʌn/", explanation: "로컬 AI를 사용할 수 없어 macOS 기본 사전(영영) 뜻을 표시합니다.",
-                                                 otherMeanings: ["pass or cause to pass quickly"], source: "dictionary"), false),
+            ("loading", .loading, WordDefinition(lemma: fork.headword, ipa: fork.ipa, dictionary: fork), false),
+            ("streaming", .streaming, WordDefinition(expression: "fork", lemma: "fork", partOfSpeech: "동사", meaning: "(프로세스를) 분기하",
+                                                     ipa: fork.ipa, source: "ollama:qwen3:8b", dictionary: fork), false),
+            ("done", .done, forkDone, true),
+            ("noun", .done, WordDefinition(expression: "use", lemma: "use", partOfSpeech: "명사", meaning: "(메모리) 사용량", ipa: use?.ipa ?? "",
+                                           explanation: "메모리 사용량을 나타내는 기술 용어로 쓰인다.", source: "ollama:qwen3:8b", dictionary: use), true),
+            ("unknown", .done, WordDefinition(expression: "soongongdan", lemma: "soongongdan", partOfSpeech: "고유명사",
+                                              explanation: "알려진 영어 단어가 아니어서 뜻을 알 수 없습니다.", source: "ollama:qwen3:8b"), false),
+            ("no-dictionary", .done, WordDefinition(expression: "give up", lemma: "give", partOfSpeech: "구동사", meaning: "(시도·희망을) 포기하다",
+                                                    ipa: "/ɡɪv ʌp/", explanation: "여러 번 실패한 뒤 그만두었다는 뜻이다.",
+                                                    otherMeanings: ["포기하다", "굴복하다"], source: "ollama:qwen3:8b"), false),
             ("error", .error("화면 기록 권한이 필요합니다.\n시스템 설정 → 개인정보 보호 및 보안 → 화면 및 시스템 오디오 녹음에서 BookLens를 켜 주세요.", action: .openSetup), WordDefinition(), false),
         ]
         for appearanceName in [NSAppearance.Name.aqua, .darkAqua] {
             for (name, phase, def, saved) in cases {
                 let state = PopupState()
-                state.word = name == "error" ? "" : "gave"
+                state.word = name == "error" ? "" : (def.expression.isEmpty ? def.lemma : def.expression)
                 state.phase = phase
                 state.definition = def
                 state.saved = saved
-                let view = NSHostingView(rootView: PopupView(state: state).padding(20).background(Color(nsColor: .windowBackgroundColor)))
+                // White page behind it, as over an e-book.
+                let view = NSHostingView(rootView: PopupView(state: state).padding(20).background(Color.white))
                 view.appearance = NSAppearance(named: appearanceName)
                 view.frame = CGRect(origin: .zero, size: view.fittingSize)
                 view.layoutSubtreeIfNeeded()
@@ -119,6 +130,25 @@ enum DiagnosticTools {
                 view.cacheDisplay(in: view.bounds, to: rep)
                 let suffix = appearanceName == .aqua ? "light" : "dark"
                 let url = directory.appendingPathComponent("popup-\(name)-\(suffix).png")
+                try? rep.representation(using: .png, properties: [:])?.write(to: url)
+                print(url.path)
+            }
+            let sentence = "The ephemeral glow of the lamp faded, and Mr. Holmes gave up on the investigation entirely."
+            for (name, translation, phase) in [("sentence-loading", "", PopupState.Phase.loading),
+                                               ("sentence-done", "등불의 덧없는 빛이 사라지자, 홈스 씨는 조사를 완전히 포기했다.", .done)] {
+                let state = PopupState()
+                state.mode = .sentence
+                state.sentence = sentence
+                state.translation = translation
+                state.translationSource = "ollama:qwen3:8b"
+                state.phase = phase
+                let view = NSHostingView(rootView: PopupView(state: state).padding(20).background(Color.white))
+                view.appearance = NSAppearance(named: appearanceName)
+                view.frame = CGRect(origin: .zero, size: view.fittingSize)
+                view.layoutSubtreeIfNeeded()
+                guard let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) else { continue }
+                view.cacheDisplay(in: view.bounds, to: rep)
+                let url = directory.appendingPathComponent("popup-\(name)-\(appearanceName == .aqua ? "light" : "dark").png")
                 try? rep.representation(using: .png, properties: [:])?.write(to: url)
                 print(url.path)
             }

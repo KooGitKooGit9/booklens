@@ -107,6 +107,33 @@ final class WordLocatorTests: XCTestCase {
         XCTAssertEqual(hit.sentence, "\"You are quite obstinate,\" she replied.")
     }
 
+    func testSweepWithinOneSentenceTranslatesTheWholeSentence() throws {
+        let path = [center(of: "glow", in: page[0]), center(of: "lamp", in: page[1])]
+        let hit = try XCTUnwrap(WordLocator.locateSentence(along: path, in: page))
+        XCTAssertEqual(hit.text, "The ephemeral glow of the lamp faded, and Mr. Holmes gave up on the investigation entirely.")
+        // One highlight per line the sentence covers, starting at "The" on the first line.
+        XCTAssertEqual(hit.lineRects.count, 4)
+        XCTAssertEqual(hit.lineRects[0].minX, page[0].words.first { $0.text == "The" }!.rect.minX)
+        XCTAssertEqual(hit.lineRects[3].maxX, page[3].words.first { $0.text == "entirely" }!.rect.maxX)
+    }
+
+    func testSweepAcrossTwoSentencesTakesBoth() throws {
+        let path = [center(of: "best", in: page[0]), center(of: "ephemeral", in: page[0])]
+        let hit = try XCTUnwrap(WordLocator.locateSentence(along: path, in: page))
+        XCTAssertTrue(hit.text.hasPrefix("It was the best of times. The ephemeral glow"))
+        XCTAssertTrue(hit.text.hasSuffix("investigation entirely."))
+        XCTAssertFalse(hit.text.contains("Nobody"))
+    }
+
+    func testSweepIgnoresPointsOffTextAndOtherColumns() throws {
+        let left = [makeLine("Left column talks about apples.", y: 0)]
+        let right = [makeLine("Right column mentions oranges.", y: 0, x: 600)]
+        let path = [CGPoint(x: -50, y: 10), center(of: "talks", in: left[0]), center(of: "mentions", in: right[0])]
+        let hit = try XCTUnwrap(WordLocator.locateSentence(along: path, in: left + right))
+        XCTAssertEqual(hit.text, "Left column talks about apples.")
+        XCTAssertNil(WordLocator.locateSentence(along: [CGPoint(x: 5, y: 500)], in: left + right))
+    }
+
     func testVeryLongSentenceIsTrimmedAroundWord() throws {
         let long = (0..<120).map { "w\($0)" }.joined(separator: " ")
         let lines = [makeLine(long + " target " + long, y: 0, charWidth: 2)]
@@ -289,12 +316,104 @@ final class CapturedRegionTests: XCTestCase {
 
 final class PromptTests: XCTestCase {
     func testSchemaIsValidJSONWithFieldsInOrder() throws {
-        let data = Data(Prompt.schema.utf8)
-        let object = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
-        XCTAssertEqual(object["required"] as? [String], Prompt.fieldOrder)
-        // Ollama emits fields in the order the properties are written, so check the raw text.
-        let positions = Prompt.fieldOrder.map { Prompt.schema.range(of: "\"\($0)\":{")!.lowerBound }
-        XCTAssertEqual(positions, positions.sorted())
-        XCTAssertEqual(Prompt.fieldOrder.prefix(2), ["expression", "meaning"])
+        for dictionary in [false, true] {
+            let schema = Prompt.schema(dictionary: dictionary)
+            let order = Prompt.fieldOrder(dictionary: dictionary)
+            let object = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(schema.utf8)) as? [String: Any])
+            XCTAssertEqual(object["required"] as? [String], order)
+            // Ollama emits fields in the order the properties are written, so check the raw text.
+            let positions = order.map { schema.range(of: "\"\($0)\":{")!.lowerBound }
+            XCTAssertEqual(positions, positions.sorted())
+            XCTAssertEqual(order.prefix(2), ["expression", "pos"])
+            XCTAssertTrue(schema.contains("\"maxLength\""))
+            let example = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(Prompt.exampleAssistant(dictionary: dictionary).utf8)) as? [String: Any])
+            XCTAssertEqual(Set(example.keys), Set(order))
+        }
+        XCTAssertFalse(Prompt.fieldOrder(dictionary: true).contains("other_meanings"))
+    }
+
+    func testDictionarySensesGoIntoTheUserMessage() {
+        let entry = DictionaryEntry(headword: "fork", groups: [.init(pos: "명사", glosses: ["포크", "분기"]), .init(pos: "동사", glosses: ["갈래지다"])])
+        let messages = Prompt.messages(for: LookupRequest(word: "fork", sentence: "fork a child", dictionary: entry))
+        XCTAssertTrue(messages.last!.content.hasSuffix("DICTIONARY: 명사: 포크, 분기 / 동사: 갈래지다"))
+        XCTAssertTrue(messages[0].content.contains("DICTIONARY"))
+        let plain = Prompt.messages(for: LookupRequest(word: "fork", sentence: "x"))
+        XCTAssertFalse(plain.map(\.content).joined().contains("DICTIONARY"))
+    }
+}
+
+final class ModelOutputSanitizingTests: XCTestCase {
+    func testTranslationCleanup() {
+        XCTAssertEqual(TranslationPrompt.clean("  번역: 그는 마침내 포기했다.\n"), "그는 마침내 포기했다.")
+        XCTAssertEqual(TranslationPrompt.clean("\"그는 포기했다.\""), "그는 포기했다.")
+        XCTAssertEqual(TranslationPrompt.messages(for: "Hello.").last?.content, "TEXT: Hello.")
+    }
+
+    func testCutsDerailedOutput() {
+        // Seen with qwen3:8b on an unknown word: the model loses the JSON and repeats markup.
+        let json = #"{"expression":"soongongdan","pos":"고유명사","meaning":"","explanation":"문맥 부족으로 인해 해석 불가능함.`,`other_meanings`:[]}`.```}</think>otlin.```}</think>otlin"#
+        let d = WordDefinition.fromModelJSON(json, source: "t")
+        XCTAssertEqual(d.explanation, "문맥 부족으로 인해 해석 불가능함.")
+        XCTAssertEqual(d.meaning, "")
+    }
+}
+
+final class KoreanDictionaryTests: XCTestCase {
+    func testGlossCleanup() {
+        XCTAssertEqual(KoreanDictionary.gloss(from: "①농업용 포크, 갈퀴, 쇠스랑 ▸ a hay fork건초용 갈퀴. ②식사용 포크"), "농업용 포크, 갈퀴")
+        XCTAssertEqual(KoreanDictionary.gloss(from: "〈도구 등을〉 쓰다, 사용하다; 〈힘·재능·몸 등을〉 쓰다"), "쓰다, 사용하다")
+        XCTAssertEqual(KoreanDictionary.gloss(from: "…을 받아치다; …을 역습하다. "), "받아치다")
+        XCTAssertEqual(KoreanDictionary.gloss(from: "〔수학〕 정수(整數) (whole number) (↔fraction). "), "정수")
+        XCTAssertEqual(KoreanDictionary.gloss(from: "＝tuning fork."), nil)
+    }
+
+    func testParsesPartsOfSpeechAndSkipsNotes() {
+        let text = "use | juːz | 동사(used, us·ing)타동사1.〈도구 등을〉 쓰다, 사용하다 (※utilize는 《격식》 으로 쓰다) ▸ use a knife나이프를 사용하다. "
+            + "2.…을 이용하다, 활용하다. 자동사1.항상 …하다. 숙어 use up … 다 써버리다. "
+            + "명사 | juːs | (『복수』 us·es | -iz | )1.[불]사용[이용]하기; 사용량 2.[불]사용법, 쓰는 방법, 어법. "
+        let record = KoreanDictionary.parseRecord(text, headword: "use", index: 0)
+        XCTAssertEqual(record.headword, "use")
+        XCTAssertEqual(record.ipa, "juːz")
+        XCTAssertEqual(record.sections.map(\.pos), ["동사", "동사", "명사"])
+        XCTAssertEqual(record.sections[0].glosses, ["쓰다, 사용하다", "이용하다, 활용하다"])
+        XCTAssertEqual(record.sections[2].glosses, ["사용하기", "사용법, 쓰는 방법"])
+    }
+
+    func testIgnoresPartOfSpeechWordsInUsageNotes() {
+        let text = "num·ber 1 | nʌ́mbər | 명사1.수; 숫자 [어법] number of＋복수명사'는 복수 동사로 호응하며. 2.번호. 동사, 타동사1.…을 세다. "
+        let record = KoreanDictionary.parseRecord(text, headword: "number", index: 0)
+        XCTAssertEqual(record.headword, "number")
+        XCTAssertEqual(record.sections.map(\.pos), ["명사", "동사"])
+        XCTAssertEqual(record.sections[0].glosses, ["수", "번호"])
+    }
+
+    func testInflectedFormUsesTheLemmaRecord() {
+        let entry = KoreanDictionary.entry(for: "ran", records: [
+            ("Ran", "Ran | rɑːn | 명사〔북유럽신화〕 란: 바다의 여신. "),
+            ("ran", "ran 2 | ræn | 동사run 의 과거형. "),
+            ("run", "run | rʌn | 동사(ran, run, run·ning)자동사1.달리다, 뛰다. 타동사1.〈길 등을〉 달리다, 주파하다. 명사1.뛰기, 달리기. "),
+        ])
+        XCTAssertEqual(entry?.headword, "run")
+        XCTAssertEqual(entry?.ipa, "/rʌn/")
+        XCTAssertEqual(entry?.groups.map(\.pos), ["동사", "명사"])
+        XCTAssertEqual(entry?.groups.first?.glosses, ["달리다, 뛰다", "달리다, 주파하다"])
+    }
+
+    func testMergesHomographsRoundRobin() {
+        let entry = KoreanDictionary.entry(for: "fork", records: [
+            ("fork", "fork 1 | fɔːrk | 명사1.①식사용 포크. 2.분기. 동사, 타동사1.〈음식을〉 포크로 찌르다. 2.…을 포크 모양으로 하다. 동사, 자동사1.〈길 등이〉 갈래지다. "),
+            ("fork", "fork 2 동사, 타동사[컴퓨터] (소스 프로그램을) 두 가지 방향으로 발전시키다. "),
+        ])
+        XCTAssertEqual(entry?.groups.first(where: { $0.pos == "동사" })?.glosses,
+                       ["포크로 찌르다", "갈래지다", "두 가지 방향으로 발전시키다", "포크 모양으로 하다"])
+    }
+
+    func testSystemDictionaryLookupWhenInstalled() throws {
+        try XCTSkipUnless(KoreanDictionary.shared.isAvailable, "English–Korean dictionary not installed")
+        let entry = try XCTUnwrap(KoreanDictionary.shared.lookup("keeps"))
+        XCTAssertEqual(entry.headword, "keep")
+        XCTAssertEqual(entry.groups.first?.pos, "동사")
+        XCTAssertNil(KoreanDictionary.shared.lookup("soongongdan"))
+        XCTAssertNil(KoreanDictionary.shared.lookup("명사라고"))
     }
 }

@@ -22,6 +22,10 @@ final class LookupCoordinator {
     var onVocabularyChanged: (() -> Void)?
     /// Called when a lookup must be retriggered at the same point (retry button).
     private var lastPoint: CGPoint?
+    /// The last sentence sweep, retried instead of `lastPoint` when set.
+    private var lastSweep: [CGPoint]?
+    /// Recent translations, keyed by source text.
+    private var translations: [String: String] = [:]
 
     init(settings: AppSettings, ollama: OllamaManager, store: VocabStore) {
         self.settings = settings
@@ -34,7 +38,11 @@ final class LookupCoordinator {
                 self.overlay.hide()
                 self.onOpenSetup?()
             case .retry:
-                if let p = self.lastPoint { self.lookUp(at: p, force: true) }
+                if let path = self.lastSweep {
+                    self.translateSentence(along: path)
+                } else if let p = self.lastPoint {
+                    self.lookUp(at: p, force: true)
+                }
             }
         }
         overlay.state.onSave = { [weak self] in self?.saveCurrent() }
@@ -62,9 +70,16 @@ final class LookupCoordinator {
         awaySince = nil
     }
 
+    /// Whether `point` is on the shown word or its popup; nil when no word popup is shown.
+    func isOnCurrentLookup(_ point: CGPoint) -> Bool? {
+        guard overlay.isVisible, overlay.state.mode == .word else { return nil }
+        return overlay.currentWordRect.insetBy(dx: -4, dy: -4).contains(point) || overlay.popupFrame.contains(point)
+    }
+
     /// Debug only: runs the pipeline on a supplied image instead of a screen capture.
     func lookUp(at point: CGPoint, injected region: CapturedRegion) {
         lastPoint = point
+        lastSweep = nil
         task?.cancel()
         task = Task { [weak self] in
             await self?.run(at: point, injected: region)
@@ -73,8 +88,10 @@ final class LookupCoordinator {
 
     func lookUp(at point: CGPoint, force: Bool = false) {
         if overlay.isVisible, overlay.popupFrame.contains(point) { return }
-        if !force, overlay.isVisible, overlay.currentWordRect.insetBy(dx: -1, dy: -1).contains(point) { return }
+        if !force, overlay.isVisible, overlay.state.mode == .word,
+           overlay.currentWordRect.insetBy(dx: -1, dy: -1).contains(point) { return }
         lastPoint = point
+        lastSweep = nil
         task?.cancel()
         task = Task { [weak self] in
             await self?.run(at: point)
@@ -132,15 +149,20 @@ final class LookupCoordinator {
         let recognized = Date()
         log.info("Word '\(hit.word, privacy: .public)' capture \(Int(captured.timeIntervalSince(started) * 1000))ms, OCR \(Int(recognized.timeIntervalSince(captured) * 1000))ms")
 
-        let request = LookupRequest(word: hit.word, sentence: hit.sentence, context: hit.context)
+        let word = hit.word
+        let dictionary = await Task.detached(priority: .userInitiated) { KoreanDictionary.shared.lookup(word) }.value
+        if Task.isCancelled { return }
+        let request = LookupRequest(word: hit.word, sentence: hit.sentence, context: hit.context, dictionary: dictionary)
         let wordRect = region.globalRect(for: hit.rect)
         if overlay.isVisible, shownRequest == request { return }
         shownRequest = request
 
         let state = overlay.state
+        state.mode = .word
         state.word = hit.word
         state.sentence = hit.sentence
-        state.definition = WordDefinition()
+        // The dictionary senses show right away; the model fills in the meaning in context.
+        state.definition = WordDefinition(lemma: dictionary?.headword ?? "", ipa: dictionary?.ipa ?? "", dictionary: dictionary)
         state.saved = false
         state.phase = .loading
         overlay.show(at: wordRect)
@@ -182,7 +204,8 @@ final class LookupCoordinator {
     private func finish(request: LookupRequest, definition: WordDefinition, title: String) {
         pendingSave = (request, definition, title)
         let key = (definition.expression.isEmpty ? definition.lemma : definition.expression).lowercased()
-        if settings.autoSave, definition.source != "dictionary" || !definition.meaning.isEmpty {
+        // Words without a meaning (names, OCR errors) are not worth saving automatically.
+        if settings.autoSave, !definition.meaning.isEmpty {
             saveCurrent()
         } else {
             overlay.state.saved = !key.isEmpty && store.contains(expression: key)
@@ -209,8 +232,107 @@ final class LookupCoordinator {
         return SystemDictionaryProvider()
     }
 
+    // MARK: - Sentence translation
+
+    /// Translates the sentences under a mouse sweep (trigger key held while moving across text).
+    func translateSentence(along path: [CGPoint]) {
+        guard !path.isEmpty else { return }
+        lastSweep = path
+        task?.cancel()
+        task = Task { [weak self] in
+            await self?.runSentence(along: path)
+        }
+    }
+
+    private func runSentence(along path: [CGPoint]) async {
+        let started = Date()
+        let ys = path.map(\.y)
+        let top = ys.max()!, bottom = ys.min()!
+        let center = CGPoint(x: path[0].x, y: (top + bottom) / 2)
+        // Room above and below the swept lines for the rest of the sentences.
+        let halfHeight = max(capturer.halfHeight, (top - bottom) / 2 + 160)
+        let region: CapturedRegion
+        do {
+            region = try await capturer.capture(around: center, halfHeight: halfHeight)
+        } catch let error as CaptureError {
+            if Task.isCancelled { return }
+            showError(error.localizedDescription, action: error == .permissionDenied ? .openSetup : .retry, near: path.last!)
+            return
+        } catch {
+            showError(error.localizedDescription, action: .retry, near: path.last!)
+            return
+        }
+        if Task.isCancelled { return }
+
+        let recognizer = reader.recognizer
+        let image = region.image
+        let points = path.map { region.imagePoint(for: $0) }
+        let found: SentenceHit?
+        do {
+            found = try await Task.detached(priority: .userInitiated) {
+                let lines = try recognizer.recognize(image)
+                return WordLocator.locateSentence(along: points, in: lines, imageSize: CGSize(width: image.width, height: image.height))
+            }.value
+        } catch {
+            log.error("OCR failed: \(error.localizedDescription)")
+            return
+        }
+        if Task.isCancelled { return }
+        guard let hit = found else {
+            log.debug("No text under sweep")
+            return
+        }
+        log.info("Sweep: \(hit.text.count) chars, capture + OCR \(Int(Date().timeIntervalSince(started) * 1000))ms")
+
+        let lineRects = hit.lineRects.map { region.globalRect(for: $0) }
+        let anchor = lineRects.dropFirst().reduce(lineRects.first ?? CGRect(origin: path.last!, size: .zero)) { $0.union($1) }
+        let state = overlay.state
+        state.mode = .sentence
+        state.word = ""
+        state.sentence = hit.text
+        state.translation = ""
+        state.translationSource = ""
+        state.phase = .loading
+        shownRequest = nil
+        overlay.show(at: anchor, lines: lineRects)
+        awaySince = nil
+
+        if let cached = translations[hit.text] {
+            state.translation = cached
+            state.translationSource = "ollama:\(settings.model)"
+            state.phase = .done
+            return
+        }
+        if !ollama.isRunning { await ollama.refresh() }
+        let model = settings.model
+        guard ollama.isRunning, ollama.hasModel(model) else {
+            if case .notRunning = ollama.status { Task { await ollama.startServer() } }
+            state.phase = .error("문장 번역에는 로컬 AI(Ollama)와 모델이 필요합니다.", action: .openSetup)
+            return
+        }
+        state.translationSource = "ollama:\(model)"
+        do {
+            for try await text in OllamaSentenceTranslator(client: ollama.client, model: model).translate(hit.text) {
+                if Task.isCancelled { return }
+                state.translation = text
+                state.phase = .streaming
+            }
+            if Task.isCancelled { return }
+            state.phase = .done
+            if !state.translation.isEmpty {
+                if translations.count > 50 { translations.removeAll() }
+                translations[hit.text] = state.translation
+            }
+            log.info("Translation done in \(Int(Date().timeIntervalSince(started) * 1000))ms")
+        } catch {
+            if Task.isCancelled { return }
+            state.phase = .error("번역하지 못했습니다. \(error.localizedDescription)", action: .retry)
+        }
+    }
+
     private func showError(_ message: String, action: PopupState.ErrorAction?, near point: CGPoint) {
         let state = overlay.state
+        state.mode = .word
         state.word = ""
         state.definition = WordDefinition()
         state.phase = .error(message, action: action)

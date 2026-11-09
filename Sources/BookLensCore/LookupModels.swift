@@ -17,9 +17,12 @@ public struct WordDefinition: Codable, Equatable, Sendable {
     public var otherMeanings: [String]
     /// Where the definition came from ("ollama:qwen2.5:7b-instruct", "dictionary", "mock").
     public var source: String
+    /// Senses from the English–Korean dictionary, shown above the meaning in context.
+    public var dictionary: DictionaryEntry?
 
     public init(expression: String = "", lemma: String = "", partOfSpeech: String = "", meaning: String = "",
-                ipa: String = "", explanation: String = "", otherMeanings: [String] = [], source: String = "") {
+                ipa: String = "", explanation: String = "", otherMeanings: [String] = [], source: String = "",
+                dictionary: DictionaryEntry? = nil) {
         self.expression = expression
         self.lemma = lemma
         self.partOfSpeech = partOfSpeech
@@ -28,9 +31,16 @@ public struct WordDefinition: Codable, Equatable, Sendable {
         self.explanation = explanation
         self.otherMeanings = otherMeanings
         self.source = source
+        self.dictionary = dictionary
     }
 
     public var isEmpty: Bool { meaning.isEmpty && lemma.isEmpty && expression.isEmpty }
+
+    /// General senses for lists and exports: the dictionary's, else the model's other meanings.
+    public var generalSenses: [String] {
+        if let dictionary { return dictionary.groups.map { "\($0.pos) \($0.glosses.prefix(3).joined(separator: ", "))" } }
+        return otherMeanings
+    }
 }
 
 /// A lookup request: the word under the cursor plus its context.
@@ -38,11 +48,14 @@ public struct LookupRequest: Equatable, Sendable, Hashable {
     public var word: String
     public var sentence: String
     public var context: String
+    /// Dictionary senses of the word, passed to the model so it picks a real sense.
+    public var dictionary: DictionaryEntry?
 
-    public init(word: String, sentence: String, context: String = "") {
+    public init(word: String, sentence: String, context: String = "", dictionary: DictionaryEntry? = nil) {
         self.word = word
         self.sentence = sentence
         self.context = context
+        self.dictionary = dictionary
     }
 }
 

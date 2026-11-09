@@ -55,6 +55,7 @@ final class AppSettings: ObservableObject {
     @Published var showExplanation: Bool { didSet { defaults.set(showExplanation, forKey: "showExplanation") } }
     @Published var showOtherMeanings: Bool { didSet { defaults.set(showOtherMeanings, forKey: "showOtherMeanings") } }
     @Published var hasCompletedSetup: Bool { didSet { defaults.set(hasCompletedSetup, forKey: "hasCompletedSetup") } }
+    @Published var showMenuBarIcon: Bool { didSet { defaults.set(showMenuBarIcon, forKey: "showMenuBarIcon") } }
 
     private init() {
         defaults.register(defaults: [
@@ -66,6 +67,7 @@ final class AppSettings: ObservableObject {
             "showExplanation": true,
             "showOtherMeanings": true,
             "hasCompletedSetup": false,
+            "showMenuBarIcon": true,
         ])
         enabled = defaults.bool(forKey: "enabled")
         triggerMode = TriggerMode(rawValue: defaults.string(forKey: "triggerMode") ?? "") ?? .optionHover
@@ -75,5 +77,6 @@ final class AppSettings: ObservableObject {
         showExplanation = defaults.bool(forKey: "showExplanation")
         showOtherMeanings = defaults.bool(forKey: "showOtherMeanings")
         hasCompletedSetup = defaults.bool(forKey: "hasCompletedSetup")
+        showMenuBarIcon = defaults.bool(forKey: "showMenuBarIcon")
     }
 }

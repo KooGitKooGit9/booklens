@@ -112,7 +112,9 @@ final class OllamaManager: ObservableObject {
         warmedModel = model
         let provider = OllamaMeaningProvider(client: client, model: model)
         do {
-            for try await _ in provider.lookup(LookupRequest(word: "book", sentence: "She opened the book.")) {}
+            let request = LookupRequest(word: "book", sentence: "She opened the book.",
+                                        dictionary: KoreanDictionary.shared.lookup("book"))
+            for try await _ in provider.lookup(request) {}
         } catch {
             warmedModel = nil
         }

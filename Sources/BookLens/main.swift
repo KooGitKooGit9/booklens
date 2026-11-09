@@ -30,6 +30,17 @@ MainActor.assumeIsolated {
         }
         app.run()
     }
+    // Single instance: if another copy (e.g. /Applications vs dist/) is already running, hand off to it
+    // (a reopen, which opens Settings when its menu bar icon is hidden) and quit.
+    if let bundleID = Bundle.main.bundleIdentifier,
+       let other = NSRunningApplication.runningApplications(withBundleIdentifier: bundleID)
+           .first(where: { $0.processIdentifier != ProcessInfo.processInfo.processIdentifier }) {
+        if let url = other.bundleURL {
+            NSWorkspace.shared.openApplication(at: url, configuration: NSWorkspace.OpenConfiguration()) { _, _ in exit(0) }
+            app.run()
+        }
+        exit(0)
+    }
     let delegate = AppDelegate()
     app.delegate = delegate
     withExtendedLifetime(delegate) {

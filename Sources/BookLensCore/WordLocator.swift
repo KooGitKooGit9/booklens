@@ -10,6 +10,8 @@ public enum WordLocator {
         public var verticalTolerance: CGFloat = 0.3
         public var maxSentenceLength = 420
         public var contextRadius = 280
+        /// Longest text translated from one sweep.
+        public var maxSweepLength = 1500
         public init() {}
     }
 
@@ -22,37 +24,9 @@ public enum WordLocator {
         let word = line.words[wordIndex]
 
         // Reconstruct running text for the column the line belongs to.
-        var column = columnLines(for: lineIndex, in: lines)
-        if let size = imageSize, let pos = column.firstIndex(of: lineIndex) {
-            let edge: CGFloat = 2
-            func clipped(_ i: Int) -> Bool {
-                let r = lines[i].rect
-                return r.minX <= edge || r.maxX >= size.width - edge || r.minY <= edge || r.maxY >= size.height - edge
-            }
-            var lo = pos, hi = pos
-            while lo > 0, !clipped(column[lo - 1]) { lo -= 1 }
-            while hi < column.count - 1, !clipped(column[hi + 1]) { hi += 1 }
-            column = Array(column[lo...hi])
-        }
-        var joined: [Character] = []
-        var targetOffset = 0
-        for idx in column {
-            let text = Array(lines[idx].text.trimmingCharacters(in: .whitespaces))
-            if !joined.isEmpty {
-                if let last = joined.last, Tokenizer.isHyphen(last),
-                   joined.count >= 2, joined[joined.count - 2].isLetter,
-                   let first = text.first, first.isLowercase {
-                    joined.removeLast() // de-hyphenate "exam-" + "ple"
-                } else {
-                    joined.append(" ")
-                }
-            }
-            if idx == lineIndex {
-                let leading = lines[idx].text.prefix { $0 == " " }.count
-                targetOffset = joined.count + max(0, characterOffset(ofWordAt: wordIndex, in: line) - leading)
-            }
-            joined.append(contentsOf: text)
-        }
+        let column = ColumnText(around: lineIndex, in: lines, imageSize: imageSize)
+        let joined = column.chars
+        let targetOffset = column.offset(ofWord: wordIndex, inLine: lineIndex, lines: lines) ?? 0
 
         let joinedString = String(joined)
         let tokens = Tokenizer.words(in: joinedString)
@@ -97,7 +71,86 @@ public enum WordLocator {
         let cEnd = expandToWordBoundary(joined, min(joined.count, sEnd + options.contextRadius), backward: false)
         let context = clean(String(joined[cStart..<cEnd]))
 
-        return WordHit(word: surface, rect: wordRect, sentence: sentence, context: context)
+        return WordHit(word: surface, rect: wordRect, sentence: sentence, context: context, confidence: line.confidence)
+    }
+
+    /// The sentence or sentences the mouse swept across: every sentence containing a word under one of
+    /// `points`, taken from the column of the first word hit. Returns nil if no point is over a word.
+    public static func locateSentence(along points: [CGPoint], in lines: [RecognizedLine], imageSize: CGSize? = nil,
+                                      options: Options = Options()) -> SentenceHit? {
+        let hits = points.compactMap { point -> (line: Int, word: Int)? in
+            guard let li = lineIndex(at: point, in: lines, options: options),
+                  let wi = wordIndex(at: point, in: lines[li], options: options) else { return nil }
+            return (li, wi)
+        }
+        guard let first = hits.first else { return nil }
+        let column = ColumnText(around: first.line, in: lines, imageSize: imageSize)
+        let chars = column.chars
+        let offsets = hits.compactMap { column.offset(ofWord: $0.word, inLine: $0.line, lines: lines) }
+        guard let lo = offsets.min(), let hi = offsets.max(), !chars.isEmpty else { return nil }
+        let hiEnd = expandToWordBoundary(chars, min(hi, chars.count), backward: false)
+        let (start, end) = sentenceBounds(in: chars, wordStart: lo, wordEnd: hiEnd, maxLength: options.maxSweepLength)
+        let text = clean(String(chars[start..<end]))
+        guard !text.isEmpty else { return nil }
+        let cStart = expandToWordBoundary(chars, max(0, start - options.contextRadius), backward: true)
+        let cEnd = expandToWordBoundary(chars, min(chars.count, end + options.contextRadius), backward: false)
+
+        // Highlight: per line, the words inside the sentence range.
+        var rects: [CGRect] = []
+        for li in column.order {
+            var union: CGRect?
+            for wi in lines[li].words.indices {
+                guard let off = column.offset(ofWord: wi, inLine: li, lines: lines), off >= start, off < end else { continue }
+                union = union?.union(lines[li].words[wi].rect) ?? lines[li].words[wi].rect
+            }
+            if let union { rects.append(union) }
+        }
+        return SentenceHit(text: text, context: clean(String(chars[cStart..<cEnd])), lineRects: rects)
+    }
+
+    /// Running text of one column, with the offset where each line starts.
+    struct ColumnText {
+        var chars: [Character] = []
+        /// Column lines in reading order.
+        var order: [Int] = []
+        /// Offset in `chars` of each line's trimmed text, and how many leading spaces were trimmed.
+        var starts: [Int: (offset: Int, leading: Int)] = [:]
+
+        init(around lineIndex: Int, in lines: [RecognizedLine], imageSize: CGSize?) {
+            var column = WordLocator.columnLines(for: lineIndex, in: lines)
+            if let size = imageSize, let pos = column.firstIndex(of: lineIndex) {
+                let edge: CGFloat = 2
+                func clipped(_ i: Int) -> Bool {
+                    let r = lines[i].rect
+                    return r.minX <= edge || r.maxX >= size.width - edge || r.minY <= edge || r.maxY >= size.height - edge
+                }
+                var lo = pos, hi = pos
+                while lo > 0, !clipped(column[lo - 1]) { lo -= 1 }
+                while hi < column.count - 1, !clipped(column[hi + 1]) { hi += 1 }
+                column = Array(column[lo...hi])
+            }
+            order = column
+            for idx in column {
+                let text = Array(lines[idx].text.trimmingCharacters(in: .whitespaces))
+                if !chars.isEmpty {
+                    if let last = chars.last, Tokenizer.isHyphen(last),
+                       chars.count >= 2, chars[chars.count - 2].isLetter,
+                       let first = text.first, first.isLowercase {
+                        chars.removeLast() // de-hyphenate "exam-" + "ple"
+                    } else {
+                        chars.append(" ")
+                    }
+                }
+                starts[idx] = (chars.count, lines[idx].text.prefix { $0 == " " }.count)
+                chars.append(contentsOf: text)
+            }
+        }
+
+        /// Offset in `chars` of a word, or nil if its line is not in this column.
+        func offset(ofWord wordIndex: Int, inLine lineIndex: Int, lines: [RecognizedLine]) -> Int? {
+            guard let start = starts[lineIndex] else { return nil }
+            return start.offset + max(0, WordLocator.characterOffset(ofWordAt: wordIndex, in: lines[lineIndex]) - start.leading)
+        }
     }
 
     // MARK: - Hit testing

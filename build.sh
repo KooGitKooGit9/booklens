@@ -7,7 +7,8 @@ set -euo pipefail
 cd "$(dirname "$0")"
 
 APP_NAME="BookLens"
-DIST="dist"
+# Staging copy lives under .build in a *.noindex folder so Spotlight/Launchpad only show the installed app.
+DIST=".build/dist.noindex"
 APP="$DIST/$APP_NAME.app"
 INSTALL_DIR="${BOOKLENS_INSTALL_DIR:-/Applications}"
 OPEN=1

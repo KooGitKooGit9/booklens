@@ -19,7 +19,16 @@ let cases: [LookupRequest] = [
     LookupRequest(word: "minute", sentence: "The scientist examined the minute differences between the two samples."),
     LookupRequest(word: "content", sentence: "She seemed content with her quiet life in the village."),
     LookupRequest(word: "novel", sentence: "The committee welcomed his novel approach to the problem."),
-]
+    LookupRequest(word: "fork", sentence: "The parent process may fork a child process and wait for it to finish."),
+    LookupRequest(word: "use", sentence: "Simple user interface, small memory use."),
+    LookupRequest(word: "counter", sentence: "We can do so by having an integer counter that keeps track of the number of full buffers."),
+    LookupRequest(word: "soongongdan", sentence: "soongongdan_ad"),
+].map { c in
+    // Like the app: attach the English–Korean dictionary senses when the word is in the dictionary.
+    var c = c
+    c.dictionary = KoreanDictionary.shared.lookup(c.word)
+    return c
+}
 
 func runModels(_ models: [String]) async {
     let client = OllamaClient()
@@ -90,6 +99,14 @@ case "e2e":
     _ = NSApplication.shared
     let model = args.count > 1 ? args[1] : "qwen3:8b"
     await MainActor.run { WebPageBench() }.runEndToEnd(model: model, targets: ["ephemeral", "obstinate", "acknowledged", "drizzly", "spleen", "bore", "unpredictably", "let", "give"])
+case "dict":
+    // dict <word ...>: show what the English–Korean dictionary gives for each word.
+    for w in args.dropFirst() {
+        let start = Date()
+        let e = KoreanDictionary.shared.lookup(w)
+        print(String(format: "%@ (%.0fms) → %@ %@", w, Date().timeIntervalSince(start) * 1000, e?.headword ?? "nil", e?.ipa ?? ""))
+        for g in e?.groups ?? [] { print("   \(g.pos): \(g.glosses.joined(separator: " · "))") }
+    }
 default:
     print("usage: booklens-bench models [model ...] | web [dump-dir]")
 }

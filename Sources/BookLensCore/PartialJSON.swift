@@ -124,16 +124,27 @@ public enum PartialJSON {
 }
 
 extension WordDefinition {
+    /// Text a small model emits when it loses track of the JSON ("…`,`other_meanings`:[]}```}</think>…").
+    /// None of it belongs in a dictionary gloss.
+    static let garbageMarkers = ["`", "</", "<think", "{", "}"]
+
+    /// Trims whitespace and cuts the value at the first garbage marker.
+    static func sanitized(_ value: String) -> String {
+        var s = Substring(value)
+        if let cut = garbageMarkers.compactMap({ s.range(of: $0)?.lowerBound }).min() { s = s[..<cut] }
+        return s.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
     /// Builds a definition from the model's (possibly partial) JSON output.
     public static func fromModelJSON(_ text: String, source: String) -> WordDefinition {
         let dict = PartialJSON.parseObject(text)
         func str(_ key: String) -> String {
-            if case .string(let s)? = dict[key] { return s.trimmingCharacters(in: .whitespacesAndNewlines) }
+            if case .string(let s)? = dict[key] { return sanitized(s) }
             return ""
         }
         var others: [String] = []
         if case .strings(let a)? = dict["other_meanings"] {
-            others = a.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }
+            others = a.map(sanitized).filter { !$0.isEmpty }
         }
         return WordDefinition(
             expression: str("expression"),
