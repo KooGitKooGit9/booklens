@@ -116,6 +116,44 @@ final class OCRIntegrationTests: XCTestCase {
         XCTAssertFalse(hit.lineRects.isEmpty)
     }
 
+    /// The stroke at the end of a line separates a hyphen ("inves-") from an em dash ("hopes—") in every test font.
+    func testMeasuresHyphenAndEmDashAtLineEnd() throws {
+        func length(_ text: String, font: String, size: CGFloat, dark: Bool) throws -> CGFloat {
+            let page = render(text, fontName: font, size: size, width: 1000, dark: dark)
+            let lines = try TextRecognizer(usesLanguageCorrection: false).recognize(page.image)
+            let first = try XCTUnwrap(lines.min { $0.rect.minY < $1.rect.minY })
+            return try XCTUnwrap(TextRecognizer.trailingDashLength(in: page.image, lineRect: first.rect))
+        }
+        let fonts: [(String, CGFloat, Bool)] = [("Times New Roman", 24, false), ("Georgia", 18, false), ("Helvetica Neue", 13, false),
+                                                ("Palatino", 19, false), ("Georgia", 18, true)]
+        for (font, size, dark) in fonts {
+            let hyphen = try length("Nobody expected the long and tedious inves-\ntigation to end before winter.", font: font, size: size, dark: dark)
+            let dash = try length("She kept her obstinate hopes—\nhowever slim they seemed to the others.", font: font, size: size, dark: dark)
+            print("line-final stroke \(font) \(size)pt dark=\(dark): hyphen \(hyphen), em dash \(dash)")
+            XCTAssertLessThan(hyphen, TextRecognizer.longDashLength - 0.05, font)
+            XCTAssertGreaterThan(dash, TextRecognizer.longDashLength + 0.15, font)
+        }
+    }
+
+    /// On a rendered page, "hopes—" at the end of a line is not joined with "however" on the next line,
+    /// and a word really broken across lines still is.
+    func testLineFinalEmDashIsNotJoinedButHyphenIs() throws {
+        let dashed = render("The evening faded, yet she kept her obstinate hopes—\nhowever preposterous they seemed to the household.",
+                            fontName: "Times New Roman", size: 24, width: 1000)
+        for target in ["hopes", "however"] {
+            let box = try XCTUnwrap(dashed.boxes.first { $0.0 == target }).1
+            let hit = try XCTUnwrap(WordReader().read(dashed.image, at: CGPoint(x: box.midX, y: box.midY)))
+            XCTAssertEqual(hit.word, target)
+        }
+        let broken = render("Nobody in the house expected the long and tedious inves-\ntigation to end before the winter.",
+                            fontName: "Times New Roman", size: 24, width: 1000)
+        for target in ["inves", "tigation"] {
+            let box = try XCTUnwrap(broken.boxes.first { $0.0 == target }).1
+            let hit = try XCTUnwrap(WordReader().read(broken.image, at: CGPoint(x: box.midX, y: box.midY)))
+            XCTAssertEqual(hit.word, "investigation")
+        }
+    }
+
     func testRecognitionSpeed() throws {
         let rendered = render(Self.passage, fontName: "Georgia", size: 18)
         _ = try TextRecognizer().recognize(rendered.image) // warm up

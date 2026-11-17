@@ -86,6 +86,19 @@ case "web", "web1x":
     }
     let ok = await bench.run(samplesPerPage: 40, dumpDir: dump)
     exit(ok ? 0 : 1)
+case "webd":
+    // webd <density> [dump-dir]: same as web, at a given pixel density (2 = Retina, 1 = ordinary monitor).
+    let density = args.count > 1 ? (Double(args[1]) ?? 2) : 2
+    let dump = args.count > 2 ? URL(fileURLWithPath: args[2]) : nil
+    if let dump { try? FileManager.default.createDirectory(at: dump, withIntermediateDirectories: true) }
+    _ = NSApplication.shared
+    let bench = await MainActor.run { () -> WebPageBench in
+        let b = WebPageBench()
+        b.density = CGFloat(density)
+        return b
+    }
+    let ok = await bench.run(samplesPerPage: 40, dumpDir: dump)
+    exit(ok ? 0 : 1)
 case "probe":
     // probe <image> <x> <y>: crop a band like the app, OCR, and show lines + hit.
     let src = CGImageSourceCreateWithURL(URL(fileURLWithPath: args[1]) as CFURL, nil)!
@@ -108,5 +121,5 @@ case "dict":
         for g in e?.groups ?? [] { print("   \(g.pos): \(g.glosses.joined(separator: " · "))") }
     }
 default:
-    print("usage: booklens-bench models [model ...] | web [dump-dir]")
+    print("usage: booklens-bench models [model ...] | web [dump-dir] | web1x [dump-dir] | webd <density> [dump-dir] | e2e [model] | dict <word ...>")
 }

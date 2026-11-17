@@ -18,12 +18,16 @@ public struct RecognizedLine: Equatable, Sendable {
     public var rect: CGRect
     public var words: [RecognizedWord]
     public var confidence: Float
+    /// True when the line ends in a dash too long to be a hyphen. Vision reads an em dash at the end of a
+    /// line ("hopes—") as a hyphen, which would otherwise be joined like a word broken across lines.
+    public var endsWithLongDash: Bool
 
-    public init(text: String, rect: CGRect, words: [RecognizedWord], confidence: Float = 1) {
+    public init(text: String, rect: CGRect, words: [RecognizedWord], confidence: Float = 1, endsWithLongDash: Bool = false) {
         self.text = text
         self.rect = rect
         self.words = words
         self.confidence = confidence
+        self.endsWithLongDash = endsWithLongDash
     }
 }
 

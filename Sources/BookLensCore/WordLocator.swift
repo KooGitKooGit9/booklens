@@ -130,19 +130,26 @@ public enum WordLocator {
                 column = Array(column[lo...hi])
             }
             order = column
+            var previous: Int?
             for idx in column {
                 let text = Array(lines[idx].text.trimmingCharacters(in: .whitespaces))
                 if !chars.isEmpty {
                     if let last = chars.last, Tokenizer.isHyphen(last),
-                       chars.count >= 2, chars[chars.count - 2].isLetter,
-                       let first = text.first, first.isLowercase {
-                        chars.removeLast() // de-hyphenate "exam-" + "ple"
+                       chars.count >= 2, chars[chars.count - 2].isLetter {
+                        if let previous, lines[previous].endsWithLongDash {
+                            chars[chars.count - 1] = "—" // an em dash read as a hyphen: "hopes—" + "however" are two words
+                        } else if let first = text.first, first.isLowercase {
+                            chars.removeLast() // de-hyphenate "exam-" + "ple"
+                        } else {
+                            chars.append(" ")
+                        }
                     } else {
                         chars.append(" ")
                     }
                 }
                 starts[idx] = (chars.count, lines[idx].text.prefix { $0 == " " }.count)
                 chars.append(contentsOf: text)
+                previous = idx
             }
         }
 

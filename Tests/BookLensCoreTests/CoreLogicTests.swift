@@ -96,6 +96,18 @@ final class WordLocatorTests: XCTestCase {
         XCTAssertEqual(right.sentence, "She kept her hopes-however slim.")
     }
 
+    /// A line-final em dash that Vision returned as a hyphen: flagged by the recognizer, kept as two words here.
+    func testLineFinalDashReadAsHyphenKeepsTwoWords() throws {
+        var first = makeLine("She kept her obstinate hopes-", y: 0)
+        first.endsWithLongDash = true
+        let lines = [first, makeLine("however slim they seemed.", y: 30)]
+        let left = try XCTUnwrap(WordLocator.locate(point: center(of: "hopes-", in: lines[0]), in: lines))
+        XCTAssertEqual(left.word, "hopes")
+        XCTAssertEqual(left.sentence, "She kept her obstinate hopes—however slim they seemed.")
+        let right = try XCTUnwrap(WordLocator.locate(point: center(of: "however", in: lines[1]), in: lines))
+        XCTAssertEqual(right.word, "however")
+    }
+
     func testIgnoresNumbers() {
         let lines = [makeLine("Chapter 12", y: 0)]
         XCTAssertNil(WordLocator.locate(point: center(of: "12", in: lines[0]), in: lines))

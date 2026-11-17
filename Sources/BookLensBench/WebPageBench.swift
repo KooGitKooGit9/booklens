@@ -37,6 +37,9 @@ final class WebPageBench: NSObject, WKNavigationDelegate {
 
     /// Simulate a non-Retina (1x) display: render at 1x, then upscale to 2x like the app's capture does.
     var simulateNonRetina = false
+    /// Pixel density relative to CSS px (2 = Retina, 1 = ordinary monitor). Below 2 the page is rendered at
+    /// that density and upscaled to 2x, like the app's capture does for a 1x display.
+    var density: CGFloat = 2
 
     private let webView: WKWebView
     private let window: NSWindow
@@ -72,10 +75,12 @@ final class WebPageBench: NSObject, WKNavigationDelegate {
         _ = try? await webView.evaluateJavaScript("document.fonts.ready.then(() => true)")
         try? await Task.sleep(for: .milliseconds(200))
         let config = WKSnapshotConfiguration()
-        config.snapshotWidth = NSNumber(value: Double(simulateNonRetina ? style.width / 2 : style.width)) // points; Retina gives 2x pixels
+        let d: CGFloat = simulateNonRetina ? 1 : density
+        config.snapshotWidth = NSNumber(value: Double(style.width * d / 2)) // points; Retina gives 2x pixels
         guard let snapshot = try? await webView.takeSnapshot(configuration: config),
               var cg = snapshot.cgImage(forProposedRect: nil, context: nil, hints: nil) else { return nil }
-        if simulateNonRetina {
+        print(String(format: "RENDER %@ px/css %.2f", style.name, Double(cg.width) / Double(style.width)))
+        if d < 2 {
             let w = Int(style.width * 2), h = cg.height * w / cg.width
             let ctx = CGContext(data: nil, width: w, height: h, bitsPerComponent: 8, bytesPerRow: 0, space: CGColorSpaceCreateDeviceRGB(),
                                 bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
@@ -132,10 +137,12 @@ final class WebPageBench: NSObject, WKNavigationDelegate {
                     let t0 = Date()
                     guard let hit = try? reader.read(crop, at: local) else { print("\(style.name) \(target): NO HIT"); continue }
                     let t1 = Date()
+                    let dict = KoreanDictionary.shared.lookup(hit.word)
+                    let t1d = Date()
                     var firstMeaning: Date?
                     var def = WordDefinition()
                     do {
-                        for try await e in provider.lookup(LookupRequest(word: hit.word, sentence: hit.sentence, context: hit.context)) {
+                        for try await e in provider.lookup(LookupRequest(word: hit.word, sentence: hit.sentence, context: hit.context, dictionary: dict)) {
                             switch e {
                             case .partial(let d): if firstMeaning == nil, !d.meaning.isEmpty { firstMeaning = Date() }
                             case .complete(let d): def = d
@@ -145,6 +152,7 @@ final class WebPageBench: NSObject, WKNavigationDelegate {
                     let t2 = Date()
                     print(String(format: "[%@] %@ OCR %.0fms, meaning %.2fs, total %.2fs", style.name, hit.word, t1.timeIntervalSince(t0) * 1000,
                                  (firstMeaning ?? t2).timeIntervalSince(t0), t2.timeIntervalSince(t0)))
+                    print(String(format: "DICT %@ %.1fms senses %d", hit.word, t1d.timeIntervalSince(t1) * 1000, dict?.groups.count ?? -1))
                     print("   sentence: \(hit.sentence)")
                     print("   → \(def.expression) [\(def.partOfSpeech)] \(def.meaning) | \(def.explanation) | \(def.otherMeanings.joined(separator: ", "))")
                 }
